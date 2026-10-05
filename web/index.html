@@ -267,7 +267,7 @@
         <div class="toolbar">
           <div class="grow">
             <label for="historyFilter">Filter</label>
-            <input id="historyFilter" placeholder="host:example.com method:GET status>=400 source:fuzzer" />
+            <input id="historyFilter" placeholder="host:example.com status:[404,500] response:~set-cookie path=~^/api" />
           </div>
           <button class="btn primary fit" id="loadHistory">Load</button>
           <label class="fit" style="margin:0">Clear before <input id="historyClearBefore" type="datetime-local" /></label>

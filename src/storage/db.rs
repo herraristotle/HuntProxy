@@ -149,6 +149,40 @@ pub fn configure_connection(
         },
     )
     .map_err(|e| DomainError::new(ErrorCode::StorageError, e.to_string()))?;
+    // `X REGEXP Y` is sugar for `regexp(Y, X)`: pattern first, value second.
+    conn.create_scalar_function(
+        "regexp",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let pattern = context.get::<String>(0)?;
+            let Some(bytes) = query_value_bytes(context.get_raw(1)) else {
+                return Ok(false);
+            };
+            let compiled = compile_query_regex(&pattern)?;
+            Ok(compiled.is_match(&String::from_utf8_lossy(&bytes)))
+        },
+    )
+    .map_err(|e| DomainError::new(ErrorCode::StorageError, e.to_string()))?;
+    conn.create_scalar_function(
+        "huntproxy_body_regex",
+        3,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let codec = context.get::<String>(0)?;
+            let content = context.get::<Vec<u8>>(1)?;
+            let pattern = context.get::<String>(2)?;
+            let compiled = compile_query_regex(&pattern)?;
+            let decoded =
+                crate::storage::bodies::decode_body(&codec, &content).map_err(|error| {
+                    rusqlite::Error::UserFunctionError(Box::new(std::io::Error::other(
+                        error.to_string(),
+                    )))
+                })?;
+            Ok(compiled.is_match(&String::from_utf8_lossy(&decoded)))
+        },
+    )
+    .map_err(|e| DomainError::new(ErrorCode::StorageError, e.to_string()))?;
     // DEFENSIVE mode
     unsafe {
         rusqlite::ffi::sqlite3_db_config(
@@ -159,6 +193,46 @@ pub fn configure_connection(
         );
     }
     Ok(())
+}
+
+/// Upper bound mirroring `MAX_REGEX_LEN` in `crate::history`, so a bound
+/// pattern can never blow past the parse-time limit even if the SQL layer is
+/// bypassed.
+const MAX_QUERY_REGEX_LEN: usize = 512;
+const MAX_CACHED_QUERY_REGEXES: usize = 256;
+
+static QUERY_REGEX_CACHE: std::sync::LazyLock<dashmap::DashMap<String, Arc<regex::Regex>>> =
+    std::sync::LazyLock::new(dashmap::DashMap::new);
+
+fn compile_query_regex(pattern: &str) -> rusqlite::Result<Arc<regex::Regex>> {
+    if pattern.len() > MAX_QUERY_REGEX_LEN {
+        return Err(rusqlite::Error::UserFunctionError(Box::new(
+            std::io::Error::other("regex pattern too long"),
+        )));
+    }
+    if let Some(entry) = QUERY_REGEX_CACHE.get(pattern) {
+        return Ok(entry.value().clone());
+    }
+    let compiled = regex::Regex::new(pattern).map_err(|error| {
+        rusqlite::Error::UserFunctionError(Box::new(std::io::Error::other(error.to_string())))
+    })?;
+    let compiled = Arc::new(compiled);
+    if QUERY_REGEX_CACHE.len() > MAX_CACHED_QUERY_REGEXES {
+        QUERY_REGEX_CACHE.clear();
+    }
+    QUERY_REGEX_CACHE.insert(pattern.to_string(), compiled.clone());
+    Ok(compiled)
+}
+
+fn query_value_bytes(value: rusqlite::types::ValueRef<'_>) -> Option<Vec<u8>> {
+    use rusqlite::types::ValueRef;
+    match value {
+        ValueRef::Null => None,
+        ValueRef::Text(text) => Some(text.to_vec()),
+        ValueRef::Blob(blob) => Some(blob.to_vec()),
+        ValueRef::Integer(number) => Some(number.to_string().into_bytes()),
+        ValueRef::Real(number) => Some(number.to_string().into_bytes()),
+    }
 }
 
 /// Shared app state handle.

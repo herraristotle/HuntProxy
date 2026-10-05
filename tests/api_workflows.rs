@@ -279,6 +279,41 @@ async fn history_filter_and_annotation_work_through_http_api() {
     assert!(body_search["total"].is_null());
     assert_eq!(body_search["total_exact"], false);
 
+    let response_search = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{}/history?q=response%3A~missing",
+                project_id.get()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response_search.status(), StatusCode::OK);
+    let response_search = json_response(response_search).await;
+    assert!(response_search["total"].is_null());
+    assert_eq!(response_search["total_exact"], false);
+
+    // Regex on a plain column stays cheap enough for an exact count.
+    let regex_search = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{}/history?q=path%3D~get",
+                project_id.get()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(regex_search.status(), StatusCode::OK);
+    let regex_search = json_response(regex_search).await;
+    assert_eq!(regex_search["total"], 1);
+    assert_eq!(regex_search["total_exact"], true);
+
     let first_page = app
         .clone()
         .oneshot(

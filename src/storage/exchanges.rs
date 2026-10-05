@@ -1584,6 +1584,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn history_regex_header_exists_and_null_ne_filters_match_stored_rows() {
+        let db = Db::open_in_memory().await.unwrap();
+        let project = db
+            .create_project(CreateProjectRequest {
+                name: "new filter ops".into(),
+                target_url: "https://example.com/".into(),
+                advanced: None,
+            })
+            .await
+            .unwrap();
+
+        let mut ok = spool_exchange(project.id);
+        ok.path = "/api/v1/users".into();
+        ok.status_code = Some(404);
+        ok.response_headers = vec![HeaderEntry {
+            name: "Server".into(),
+            value: b"nginx/1.24".to_vec(),
+            ordinal: 0,
+        }];
+        ok.response_body = Some(br#"{"session":"deadbeef-cafe"}"#.to_vec());
+        let ok_id = db.insert_exchange(ok).await.unwrap();
+
+        let mut failed = spool_exchange(project.id);
+        failed.path = "/static/app.js".into();
+        failed.status_code = None;
+        let failed_id = db.insert_exchange(failed).await.unwrap();
+
+        async fn search(db: &Db, project_id: ProjectId, query: &str) -> Vec<ExchangeId> {
+            let filter = crate::history::parse_text_query(query).unwrap();
+            let (items, next) = db
+                .list_history_filtered(project_id, Some(filter), 50, None, None)
+                .await
+                .unwrap();
+            assert!(next.is_none());
+            items.into_iter().map(|item| item.exchange_id).collect()
+        }
+
+        let ids = search(&db, project.id, r"path=~^/api/v\d+/").await;
+        assert_eq!(ids, vec![ok_id]);
+
+        let ids = search(&db, project.id, r"path!=~^/static/").await;
+        assert_eq!(ids, vec![ok_id]);
+
+        // NULL status (failed exchange) survives `!=` thanks to IS NOT.
+        let ids = search(&db, project.id, "status!=404").await;
+        assert_eq!(ids, vec![failed_id]);
+        let ids = search(&db, project.id, "status:404").await;
+        assert_eq!(ids, vec![ok_id]);
+
+        let ids = search(&db, project.id, r#"response:~"deadbeef-cafe""#).await;
+        assert_eq!(ids, vec![ok_id]);
+        let ids = search(&db, project.id, r#"request:~"deadbeef-cafe""#).await;
+        assert!(ids.is_empty());
+
+        let ids = search(&db, project.id, r#"resp_header["Server"]:~nginx"#).await;
+        assert_eq!(ids, vec![ok_id]);
+        let ids = search(&db, project.id, r#"req_header["Server"]:~nginx"#).await;
+        assert!(ids.is_empty());
+        let ids = search(&db, project.id, r#"header["Server"]:~nginx"#).await;
+        assert_eq!(ids, vec![ok_id]);
+        let ids = search(&db, project.id, r#"header["server"]:~1.24"#).await;
+        assert_eq!(ids, vec![ok_id]);
+        let ids = search(&db, project.id, r#"resp_header["Server"]:"nginx/1.24""#).await;
+        assert_eq!(ids, vec![ok_id]);
+        let ids = search(&db, project.id, r#"resp_header["Server"]:"nginx""#).await;
+        assert!(ids.is_empty());
+
+        let ids = search(&db, project.id, "has(status)").await;
+        assert_eq!(ids, vec![ok_id]);
+        let ids = search(&db, project.id, "missing(status)").await;
+        assert_eq!(ids, vec![failed_id]);
+    }
+
+    #[tokio::test]
     async fn inserts_file_backed_bodies_without_loading_them_into_exchange() {
         let db = Db::open_in_memory().await.unwrap();
         let project = db
