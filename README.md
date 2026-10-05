@@ -102,6 +102,35 @@ Optionally, open the web interface at [http://127.0.0.1:17890](http://127.0.0.1:
 </details>
 
 <details>
+<summary><strong>Build from Source</strong></summary>
+
+Build the release binary yourself instead of downloading it:
+
+```bash
+# 1. Native build dependencies (Debian/Ubuntu)
+sudo apt-get install -y build-essential cmake clang libclang-dev pkg-config
+
+# 2. Rust 1.88.0 — pinned automatically by rust-toolchain.toml through rustup
+
+# 3. Build
+cargo build --release --locked --bin HuntProxy   # → target/release/HuntProxy
+
+# 4. Initialize the data directory (CA, config, database) and browser runtime
+./target/release/HuntProxy init
+./target/release/HuntProxy browser install
+```
+
+The browser runtime needs no separate npm step: the browser worker entrypoint, package manifest, and lockfile are embedded in the binary and unpacked into the data directory by `browser install`.
+
+Before submitting changes, run the same quality gate as release CI:
+
+```bash
+scripts/check.sh   # fmt, clippy -D warnings, tests, release build, cargo deny (if installed)
+```
+
+</details>
+
+<details>
 <summary><strong>Connect HuntProxy to Your Agent</strong></summary>
 
 HuntProxy speaks MCP over standard input/output. When your agent connects, the bridge starts the local HuntProxy daemon automatically and keeps the project available across prompts.
@@ -134,6 +163,26 @@ Use this standard JSON configuration in any client that supports local stdio MCP
 ```
 
 Replace `/path/to/HuntProxy` with the absolute path to the binary. It is usually located at `~/.local/bin/HuntProxy`—for example, `/home/you/.local/bin/HuntProxy`.
+
+</details>
+
+<details>
+<summary><strong>Open the Web UI</strong></summary>
+
+The web interface is optional; day-to-day hunting happens through MCP. When you do want it, start the daemon:
+
+```bash
+HuntProxy serve
+# → UI: http://127.0.0.1:17890
+```
+
+- The UI is a single embedded page (`web/index.html`) compiled into the binary, so rebuild after editing it.
+- The API/UI listens on `127.0.0.1:17890` by default; the capture proxy uses `17891`.
+- Verify the daemon is healthy with `curl http://127.0.0.1:17890/api/v1/health`.
+- Connecting your agent through MCP starts the daemon automatically if it is not already running.
+
+> [!NOTE]
+> HuntProxy binds to loopback by default. To reach the UI from another machine (for example a VPS), prefer an SSH tunnel — `ssh -L 17890:127.0.0.1:17890 user@host` — over binding to `0.0.0.0`, which requires a `remote_auth_token` in `~/.huntproxy/config.toml`.
 
 </details>
 
