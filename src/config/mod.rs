@@ -45,6 +45,9 @@ pub struct Config {
     pub idle_timeout_seconds: u64,
     /// Optional default and host-specific upstream proxies for outbound requests.
     pub upstream_proxies: UpstreamProxyConfig,
+    /// Flow engine execution settings.
+    #[serde(default)]
+    pub flows: FlowsConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -60,6 +63,19 @@ pub struct UpstreamProxyConfig {
 pub struct UpstreamProxyRule {
     pub host: String,
     pub proxy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FlowsConfig {
+    /// Allow `flow/shell` nodes to execute commands on this machine.
+    pub allow_shell: bool,
+}
+
+impl Default for FlowsConfig {
+    fn default() -> Self {
+        Self { allow_shell: true }
+    }
 }
 
 impl UpstreamProxyConfig {
@@ -172,6 +188,7 @@ impl Default for Config {
             auto_start_daemon: true,
             idle_timeout_seconds: 60 * 60,
             upstream_proxies: UpstreamProxyConfig::default(),
+            flows: FlowsConfig::default(),
         }
     }
 }
@@ -252,6 +269,9 @@ impl Config {
         }
         if let Some(v) = f.upstream_proxies {
             self.upstream_proxies = v;
+        }
+        if let Some(v) = f.flows {
+            self.flows = v;
         }
     }
 
@@ -357,6 +377,7 @@ impl Config {
             node_path: self.node_path.as_ref().map(|p| p.display().to_string()),
             plugin_dir: Some(self.plugin_dir.display().to_string()),
             upstream_proxies: Some(self.upstream_proxies.clone()),
+            flows: Some(self.flows.clone()),
         };
         let text = toml::to_string_pretty(&file).map_err(|e| {
             DomainError::new(ErrorCode::ConfigInvalid, format!("serialize config: {e}"))
@@ -381,6 +402,7 @@ struct ConfigFile {
     node_path: Option<String>,
     plugin_dir: Option<String>,
     upstream_proxies: Option<UpstreamProxyConfig>,
+    flows: Option<FlowsConfig>,
 }
 
 pub fn default_data_dir() -> PathBuf {

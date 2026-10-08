@@ -180,6 +180,34 @@ impl Db {
         })
         .await
     }
+
+    /// Enables or disables a flow without touching its definition.
+    pub async fn set_flow_enabled(
+        &self,
+        project_id: ProjectId,
+        flow_id: FlowId,
+        enabled: bool,
+    ) -> DomainResult<()> {
+        self.with_conn(move |conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE flows SET enabled=?3, updated_at=?4
+                     WHERE project_id=?1 AND id=?2",
+                    params![
+                        project_id.get(),
+                        flow_id.get(),
+                        i64::from(enabled),
+                        now_rfc3339()
+                    ],
+                )
+                .map_err(storage_error)?;
+            if changed == 0 {
+                return Err(DomainError::not_found("flow"));
+            }
+            Ok(())
+        })
+        .await
+    }
 }
 
 fn read_flow_row(project_id: ProjectId, row: &rusqlite::Row<'_>) -> rusqlite::Result<Flow> {

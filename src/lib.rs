@@ -18,6 +18,7 @@ pub mod cookies;
 pub mod copy_as;
 pub mod crawler;
 pub mod domain;
+pub mod flow;
 pub mod fuzzer;
 pub mod get_words;
 pub mod har;

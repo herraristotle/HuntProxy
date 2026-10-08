@@ -116,6 +116,40 @@ impl Db {
         .await
     }
 
+    /// Writes the row color used by the History table and flows.
+    pub async fn set_exchange_color(
+        &self,
+        project_id: ProjectId,
+        exchange_id: ExchangeId,
+        color: Option<String>,
+    ) -> DomainResult<()> {
+        self.with_conn(move |conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE exchanges SET color=?3 WHERE project_id=?1 AND exchange_id=?2",
+                    params![project_id.get(), exchange_id.get(), color],
+                )
+                .map_err(storage_error)?;
+            if changed > 0 {
+                return Ok(());
+            }
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM exchanges
+                     WHERE project_id=?1 AND exchange_id=?2)",
+                    params![project_id.get(), exchange_id.get()],
+                    |row| row.get(0),
+                )
+                .map_err(storage_error)?;
+            if exists {
+                Ok(())
+            } else {
+                Err(DomainError::not_found("exchange"))
+            }
+        })
+        .await
+    }
+
     /// Attach a rendered main-page title to the newest matching managed-browser
     /// HTML document. Exact URL/session matching prevents titles leaking onto
     /// subresources or another browser workspace.
