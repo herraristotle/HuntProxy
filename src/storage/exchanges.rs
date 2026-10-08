@@ -19,7 +19,7 @@ pub(crate) const HEADER_ACCOUNTING_OVERHEAD: u64 = 64;
 const HISTORY_SELECT: &str =
     "SELECT exchange_id, source, started_at, duration_ms, method, scheme, authority, host, port, path, query,
             status_code, mime, request_length, response_length, completion, capture_quality,
-            page_title, display_title, parent_exchange_id, transport_provenance
+            page_title, display_title, parent_exchange_id, transport_provenance, color
      FROM exchanges";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -820,6 +820,7 @@ fn raw_summary(
             .get::<_, Option<String>>(20)?
             .as_deref()
             .map(parse_transport_prov),
+        color: row.get(21)?,
     })
 }
 

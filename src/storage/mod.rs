@@ -8,6 +8,7 @@ mod cookies;
 mod db;
 mod exchanges;
 mod findings;
+mod flows;
 mod fuzz_store;
 mod ip_rotation;
 mod lifecycle;
@@ -36,6 +37,8 @@ pub use browser_store::*;
 pub use cookies::*;
 #[allow(unused_imports)]
 pub use findings::*;
+#[allow(unused_imports)]
+pub use flows::*;
 #[allow(unused_imports)]
 pub use fuzz_store::*;
 #[allow(unused_imports)]

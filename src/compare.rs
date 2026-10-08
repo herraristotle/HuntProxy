@@ -630,6 +630,7 @@ mod tests {
                 page_title: None,
                 display_title: None,
                 labels: Vec::new(),
+                color: None,
                 parent_exchange_id: None,
                 transport_provenance: Some(TransportProvenance::SemanticProxy),
             },

@@ -118,6 +118,9 @@ pub struct ExchangeSummary {
     pub page_title: Option<String>,
     pub display_title: Option<String>,
     pub labels: Vec<String>,
+    /// Row color written by set-color flows; null means default rendering.
+    #[serde(default)]
+    pub color: Option<String>,
     pub parent_exchange_id: Option<ExchangeId>,
     pub transport_provenance: Option<TransportProvenance>,
 }
