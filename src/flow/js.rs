@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rquickjs::{Context, Function, Runtime};
+use rquickjs::{CatchResultExt, Context, Function, Runtime};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 

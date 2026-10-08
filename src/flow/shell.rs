@@ -55,8 +55,8 @@ pub async fn run_flow_shell(request: ShellRequest) -> DomainResult<ShellOutput> 
         )
     })?;
 
-    let mut stdout_pipe = child.stdout.take().expect("piped stdout");
-    let mut stderr_pipe = child.stderr.take().expect("piped stderr");
+    let stdout_pipe = child.stdout.take().expect("piped stdout");
+    let stderr_pipe = child.stderr.take().expect("piped stderr");
     let stdout_task = tokio::spawn(async move {
         let mut buffer = Vec::new();
         let mut limited = stdout_pipe.take(MAX_SHELL_OUTPUT as u64);

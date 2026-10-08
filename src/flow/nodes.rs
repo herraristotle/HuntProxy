@@ -430,12 +430,12 @@ fn json_select(inputs: &BTreeMap<String, Value>) -> DomainResult<NodeOutcome> {
             "invalid path `{path}` (use dotted segments like a.b.0)"
         )));
     }
-    let mut current = &root;
+    let mut current: Option<&Value> = Some(&root);
     let mut found = true;
     for segment in path.split('.') {
         current = match current {
-            Value::Object(map) => map.get(segment),
-            Value::Array(items) => segment
+            Some(Value::Object(map)) => map.get(segment),
+            Some(Value::Array(items)) => segment
                 .parse::<usize>()
                 .ok()
                 .and_then(|index| items.get(index)),
