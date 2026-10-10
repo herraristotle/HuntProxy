@@ -359,6 +359,9 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(codec_transform).layer(DefaultBodyLimit::max(payload_body_limit)),
         )
         .route("/", get(ui_index))
+        .route("/assets/flow-api.js", get(ui_flow_api_js))
+        .route("/assets/flow-editor.js", get(ui_flow_editor_js))
+        .route("/assets/flow-inspector.js", get(ui_flow_inspector_js))
         .layer(axum::middleware::from_fn(prevent_api_caching))
         .layer(axum::middleware::from_fn_with_state(
             activity_state,
@@ -2543,6 +2546,27 @@ async fn codec_transform(Json(body): Json<CodecBody>) -> Response {
 
 async fn ui_index() -> impl IntoResponse {
     Html(include_str!("../../web/index.html"))
+}
+
+async fn ui_flow_api_js() -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        include_str!("../../web/flow-api.js"),
+    )
+}
+
+async fn ui_flow_editor_js() -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        include_str!("../../web/flow-editor.js"),
+    )
+}
+
+async fn ui_flow_inspector_js() -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        include_str!("../../web/flow-inspector.js"),
+    )
 }
 
 fn error_response(e: DomainError) -> Response {

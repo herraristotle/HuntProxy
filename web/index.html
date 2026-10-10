@@ -168,6 +168,7 @@
       <button type="button" data-view="rules">Rules</button>
       <button type="button" data-view="words">Get Words</button>
       <button type="button" data-view="findings">Findings</button>
+      <button type="button" data-view="flows">Flows</button>
       <button type="button" data-view="reply">Reply</button>
       <button type="button" data-view="fuzzer">Fuzzer</button>
       <button type="button" data-view="websockets">WebSockets</button>
@@ -392,6 +393,60 @@
         </div>
       </section>
 
+      <section id="view-flows" class="panel hidden">
+        <div class="split">
+          <div class="card">
+            <div class="row" style="margin-bottom:.55rem"><h2 style="margin:0">Flows</h2><button class="btn fit" id="refreshFlows">Refresh</button></div>
+            <p class="small muted">Passive flows run on every recorded exchange. Active flows run on demand.</p>
+            <div class="stack" id="flowList"></div>
+            <div class="empty hidden" id="flowsEmpty">No flows yet.</div>
+            <details style="margin-top:.75rem">
+              <summary>New flow</summary>
+              <label for="newFlowName">Name</label>
+              <input id="newFlowName" placeholder="color-500s" />
+              <label for="newFlowKind">Kind</label>
+              <select id="newFlowKind">
+                <option value="active">Active (run manually)</option>
+                <option value="passive">Passive (runs on captured exchanges)</option>
+              </select>
+              <button class="btn primary" id="createFlow" style="margin-top:.5rem">Create</button>
+            </details>
+            <div class="status" id="flowStatus"></div>
+          </div>
+          <div>
+            <div class="empty" id="flowEditorEmpty">Select or create a flow to edit it.</div>
+            <div id="flowEditor" class="hidden">
+              <div class="row" style="margin-bottom:.5rem">
+                <h2 style="margin:0" id="flowEditorTitle">Flow</h2>
+                <button class="btn fit" id="flowRun">Run now</button>
+                <button class="btn fit" id="flowToggleEnabled">Disable</button>
+                <button class="btn fit" id="flowDelete">Delete</button>
+              </div>
+              <p class="small muted" id="flowEditorMeta"></p>
+              <div class="card">
+                <div class="row" style="align-items:center">
+                  <strong>Graph</strong>
+                  <span class="small muted">Drag nodes. Click an output port, then an input port to wire. Select a node to edit it.</span>
+                </div>
+                <div id="flowPalette" class="row" style="flex-wrap:wrap;gap:.3rem;margin-top:.4rem"></div>
+                <svg id="flowCanvas" style="width:100%;height:340px;background:var(--panel-2);border:1px solid var(--panel-2);border-radius:6px;margin-top:.4rem"></svg>
+                <div id="flowInspector"></div>
+              </div>
+              <details style="margin-top:.5rem">
+                <summary>Definition JSON</summary>
+                <textarea id="flowJson" class="mono" style="min-height:180px"></textarea>
+                <button class="btn" id="flowApplyJson">Apply JSON</button>
+              </details>
+              <div class="card" style="margin-top:.5rem">
+                <strong>Jobs</strong>
+                <div class="stack" id="flowJobList"></div>
+                <div class="empty hidden" id="flowJobsEmpty">No recent jobs.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="view-reply" class="panel hidden">
         <div class="tabs" id="replyTabs"></div>
         <div class="toolbar"><button class="btn" id="newReplyTab">+ New tab</button><span class="status" id="replyStatus"></span></div>
@@ -566,6 +621,9 @@ test
     </div>
   </main>
 
+  <script src="/assets/flow-api.js"></script>
+  <script src="/assets/flow-inspector.js"></script>
+  <script src="/assets/flow-editor.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
     const encoder = new TextEncoder();
@@ -644,6 +702,7 @@ test
       if (name === 'rules') loadRules();
       if (name === 'words') loadWords();
       if (name === 'findings') loadFindings();
+      if (name === 'flows') HuntFlows?.onShow();
       if (name === 'fuzzer') loadFuzzJobs();
       if (name === 'websockets') loadWebSockets();
       if (name === 'browser') loadBrowserStatus();
@@ -684,6 +743,7 @@ test
       $('analyzePage').disabled = true;
       $('pageAnalysis').classList.add('hidden');
       connectEvents();
+      HuntFlows?.setProject(state.projectId);
       if (!state.projectId) { renderIpRotationProfiles([]); status('ipRotationStatus', 'Select a project.'); return; }
       try {
         const project = await api(`/api/v1/projects/${state.projectId}`);
@@ -965,13 +1025,14 @@ test
       const source = new EventSource(`/api/v1/projects/${state.projectId}/events`);
       state.events = source;
       source.addEventListener('ready', () => { $('liveDot').classList.add('on'); $('liveText').textContent = 'live'; });
-      for (const event of ['exchange', 'annotation', 'finding', 'fuzz', 'browser', 'websocket', 'capture']) {
+      for (const event of ['exchange', 'annotation', 'finding', 'fuzz', 'browser', 'websocket', 'capture', 'flow']) {
         source.addEventListener(event, () => {
           if (event === 'exchange' || event === 'annotation') loadHistory();
           if (event === 'finding') loadFindings();
           if (event === 'fuzz') loadFuzzJobs();
           if (event === 'browser') loadBrowserStatus();
           if (event === 'websocket') loadWebSockets();
+          if (event === 'flow') HuntFlows?.onEvent();
         });
       }
       source.addEventListener('lagged', () => projectChanged());
@@ -1766,6 +1827,7 @@ test
     window.addEventListener('beforeunload', () => state.events?.close());
     (async () => {
       await refreshHealth();
+      try { await HuntFlows.init(); } catch (e) { console.warn('flow editor init failed', e); }
       try { await loadProjects(); } catch (e) { status('sideStatus', e.message, 'err'); }
       const initialView = location.hash.slice(1);
       const validViews = [...document.querySelectorAll('nav button')].map(button => button.dataset.view);
