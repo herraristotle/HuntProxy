@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn catalog_entries_are_consistent() {
-        assert!(!NODES.is_empty());
+        assert!(NODES.len() >= 12);
         let mut seen = std::collections::BTreeSet::new();
         for node in NODES {
             assert!(seen.insert(node.type_name), "duplicate {}", node.type_name);

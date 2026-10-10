@@ -517,7 +517,7 @@ mod tests {
         assert!(outcome.succeeded());
         assert_eq!(outcome.steps.len(), 1);
         assert_eq!(outcome.steps[0].port, "false");
-        assert!(outcome.outputs.get("paint.exchange_id").is_none());
+        assert!(!outcome.outputs.contains_key("paint.exchange_id"));
     }
 
     #[tokio::test]
