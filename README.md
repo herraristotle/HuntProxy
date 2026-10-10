@@ -230,6 +230,7 @@ HuntProxy gives agents a complete hunting loop: build context â†’ investigate â†
 | **Portable projects** | Create sanitized project exports by default, opt into complete sensitive exports when needed, transfer HAR history, and back up the database. |
 | **Credential handling** | Keep credentials locally usable for authenticated work without exposing them through routine inspection tools. |
 | **Bounded plugins** | Add focused testing workflows while HuntProxy retains control of network access, credentials, limits, cancellation, History, and evidence. |
+| **Flows** | Build passive or manual graph workflows that color exchanges, file findings, send HTTP requests, and run bounded JavaScript or shell steps; edit them on a canvas in the UI or drive them through REST and MCP. |
 
 > [!TIP]
 > **The cool part?** You do not need to learn or explore every feature before you start. Just ask your agent to use HuntProxy MCP for the hunt. It can discover the available tools, choose what it needs, and keep the workflow moving.
