@@ -33,6 +33,7 @@ pub struct AppState {
     pub crawler: Arc<CrawlerService>,
     pub plugins: Arc<crate::plugins::PluginService>,
     pub websocket: crate::websocket::SharedWebSocketService,
+    pub flows: Arc<crate::flow::FlowService>,
     pub events: broadcast::Sender<AppEvent>,
     pub shutdown: CancellationToken,
     pub activity: ActivityTracker,
@@ -91,7 +92,10 @@ pub async fn run_daemon(config: Config) -> DomainResult<()> {
             loop {
                 let idle_for = state.activity.idle_for();
                 if idle_for >= timeout {
-                    if state.fuzzer.has_active_jobs() || state.plugins.has_active_jobs() {
+                    let busy = state.fuzzer.has_active_jobs()
+                        || state.plugins.has_active_jobs()
+                        || state.flows.has_any_active_jobs().await;
+                    if busy {
                         tokio::select! {
                             _ = state.shutdown.cancelled() => break,
                             _ = tokio::time::sleep(Duration::from_secs(30)) => continue,
@@ -110,6 +114,32 @@ pub async fn run_daemon(config: Config) -> DomainResult<()> {
                 }
             }
         }))
+    };
+
+    // Passive flow triggers: every recorded exchange event queues enabled
+    // passive flows for its project.
+    let flow_subscriber = {
+        let st = state.clone();
+        let mut rx = st.events.subscribe();
+        let token = shutdown.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = token.cancelled() => break,
+                    event = rx.recv() => match event {
+                        Ok(event) => {
+                            if event.kind == "exchange" {
+                                handle_exchange_event(&st, &event).await;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(skipped, "flow subscriber lagged; skipped events");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            }
+        })
     };
 
     // API
@@ -188,6 +218,7 @@ pub async fn run_daemon(config: Config) -> DomainResult<()> {
         }
     };
     state.shutdown.cancel();
+    state.flows.shutdown();
     match tokio::time::timeout(Duration::from_secs(5), state.browser.stop_all()).await {
         Ok(Ok(_)) => {}
         Ok(Err(error)) => tracing::warn!(%error, "failed to stop every browser during shutdown"),
@@ -197,6 +228,7 @@ pub async fn run_daemon(config: Config) -> DomainResult<()> {
         }
     }
     while servers.join_next().await.is_some() {}
+    let _ = flow_subscriber.await;
     if let Some(idle_monitor) = idle_monitor {
         let _ = idle_monitor.await;
     }
@@ -218,6 +250,55 @@ async fn termination_signal() {
         }
     }
     std::future::pending::<()>().await;
+}
+
+/// Queues every enabled passive flow for a recorded exchange. The trigger
+/// payload carries the summary fields flows reference (status, method, URL).
+async fn handle_exchange_event(state: &AppState, event: &AppEvent) {
+    let Some(exchange_id) = event
+        .payload
+        .get("exchange_id")
+        .and_then(serde_json::Value::as_i64)
+    else {
+        return;
+    };
+    let project_id = ProjectId::from(event.project_id);
+    let exchange_id = ExchangeId::from(exchange_id);
+    let summary = match state.db.get_exchange_summary(project_id, exchange_id).await {
+        Ok(summary) => summary,
+        Err(error) => {
+            tracing::debug!(%error, exchange_id = exchange_id.get(), "flow trigger skipped");
+            return;
+        }
+    };
+    let payload = serde_json::json!({
+        "exchange_id": exchange_id.get(),
+        "source": "proxy",
+        "status": summary.status_code,
+        "method": summary.method,
+        "scheme": summary.scheme,
+        "authority": summary.authority,
+        "host": summary.host,
+        "port": summary.port,
+        "path": summary.path,
+        "query": summary.query,
+        "mime": summary.mime,
+        "completion": summary.completion,
+    });
+    match state.flows.trigger_passive(project_id, payload).await {
+        Ok(spawned) if !spawned.is_empty() => {
+            tracing::debug!(
+                project_id = event.project_id,
+                exchange_id = exchange_id.get(),
+                queued = spawned.len(),
+                "passive flows queued"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(%error, project_id = event.project_id, "passive flow trigger failed");
+        }
+    }
 }
 
 pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
@@ -283,6 +364,13 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
         events.clone(),
     ));
     let websocket = Arc::new(crate::websocket::WebSocketService::new());
+    let shutdown = CancellationToken::new();
+    let flows = crate::flow::FlowService::new(
+        db.clone(),
+        Some(reply.clone()),
+        config.flows.allow_shell,
+        shutdown.clone(),
+    );
     Ok(Arc::new(AppState {
         db,
         config,
@@ -293,8 +381,9 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
         crawler,
         plugins,
         websocket,
+        flows,
         events,
-        shutdown: CancellationToken::new(),
+        shutdown,
         activity: ActivityTracker::new(),
     }))
 }

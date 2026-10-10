@@ -654,6 +654,29 @@ impl Db {
         .await
     }
 
+    pub async fn get_exchange_summary(
+        &self,
+        project_id: ProjectId,
+        exchange_id: ExchangeId,
+    ) -> DomainResult<ExchangeSummary> {
+        self.with_conn(move |conn| {
+            conn.query_row(
+                &format!("{HISTORY_SELECT} WHERE project_id=?1 AND exchange_id=?2"),
+                params![project_id.get(), exchange_id.get()],
+                |row| raw_summary(project_id, row),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => DomainError::not_found(format!(
+                    "exchange {}/{}",
+                    project_id.get(),
+                    exchange_id.get()
+                )),
+                other => DomainError::new(ErrorCode::StorageError, other.to_string()),
+            })
+        })
+        .await
+    }
+
     pub async fn get_exchange_detail(
         &self,
         project_id: ProjectId,

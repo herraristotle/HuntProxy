@@ -180,6 +180,12 @@ impl FlowService {
         })
     }
 
+    pub async fn has_any_active_jobs(&self) -> bool {
+        let jobs = self.jobs.lock().await;
+        jobs.values()
+            .any(|entry| entry.view.state == FlowJobState::Running)
+    }
+
     async fn spawn_job(
         &self,
         project_id: ProjectId,

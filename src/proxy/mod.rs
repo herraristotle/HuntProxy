@@ -1090,6 +1090,13 @@ mod tests {
             )
             .unwrap(),
         );
+        let shutdown = CancellationToken::new();
+        let flows = crate::flow::FlowService::new(
+            db.clone(),
+            Some(reply.clone()),
+            config.flows.allow_shell,
+            shutdown.clone(),
+        );
         let state = Arc::new(AppState {
             db: db.clone(),
             config,
@@ -1100,8 +1107,9 @@ mod tests {
             crawler,
             plugins,
             websocket: Arc::new(crate::websocket::WebSocketService::new()),
+            flows,
             events,
-            shutdown: CancellationToken::new(),
+            shutdown,
             activity: crate::app::ActivityTracker::new(),
         });
         let project = db
