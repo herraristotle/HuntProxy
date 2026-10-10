@@ -551,13 +551,23 @@ mod tests {
                 value: "boom".into(),
             },
         );
+        definition.graph.nodes.push(FlowNode {
+            node_type: "flow/template".into(),
+            alias: "sink".into(),
+            inputs: BTreeMap::from([(
+                "template".into(),
+                FlowProperty::Const {
+                    value: "logged".into(),
+                },
+            )]),
+        });
         definition.graph.edges.push(FlowEdge {
             source: FlowPort {
                 node: "paint".into(),
                 port: "error".into(),
             },
             target: FlowPort {
-                node: "check".into(),
+                node: "sink".into(),
                 port: "exec".into(),
             },
         });
@@ -569,12 +579,15 @@ mod tests {
         )
         .await
         .unwrap();
-        // check already executed, so the error edge is a no-op and the run
-        // finishes with the recorded error output instead of aborting.
+        // the wired error edge continues the run instead of aborting it.
         assert!(outcome.succeeded(), "{:?}", outcome.error);
         assert_eq!(
             outcome.outputs.get("paint.error").and_then(Value::as_str),
             Some("bad color")
+        );
+        assert_eq!(
+            outcome.outputs.get("sink.text").and_then(Value::as_str),
+            Some("logged")
         );
     }
 

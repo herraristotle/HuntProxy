@@ -95,7 +95,7 @@ impl FlowService {
         let wanted = trigger_kind_for(flow.kind);
         let trigger = match (wanted, trigger) {
             ("exchange", FlowTrigger::Exchange(payload)) => FlowTrigger::Exchange(payload),
-            ("manual", _) => FlowTrigger::Manual(input),
+            ("manual", FlowTrigger::Manual(_)) => FlowTrigger::Manual(input),
             (expected, other) => {
                 return Err(DomainError::invalid(format!(
                     "{} flows run with a `{expected}` trigger, got `{}`",

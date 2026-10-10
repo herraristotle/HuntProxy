@@ -30,9 +30,10 @@ pub struct ShellOutput {
 }
 
 pub fn shell_timeout_ms(input: Option<f64>) -> Duration {
-    let requested = input
-        .and_then(|value| u64::try_from(value as i64).ok())
-        .unwrap_or(DEFAULT_SHELL_TIMEOUT.as_millis() as u64);
+    let requested = match input {
+        None => DEFAULT_SHELL_TIMEOUT.as_millis() as u64,
+        Some(value) => u64::try_from(value as i64).unwrap_or(1),
+    };
     let capped = requested.clamp(1, MAX_SHELL_TIMEOUT.as_millis() as u64);
     Duration::from_millis(capped)
 }

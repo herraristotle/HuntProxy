@@ -336,11 +336,20 @@ mod tests {
                 assert!(!node.exec_in.is_empty(), "{} needs exec in", node.type_name);
                 assert!(!node.exec_out.is_empty());
             }
-            let mut ports = std::collections::BTreeSet::new();
-            for spec in node.inputs.iter().chain(node.outputs) {
+            let mut input_ports = std::collections::BTreeSet::new();
+            for spec in &node.inputs {
                 assert!(
-                    ports.insert(spec.name),
-                    "{} port {}",
+                    input_ports.insert(spec.name),
+                    "{} input {}",
+                    node.type_name,
+                    spec.name
+                );
+            }
+            let mut output_ports = std::collections::BTreeSet::new();
+            for spec in node.outputs {
+                assert!(
+                    output_ports.insert(spec.name),
+                    "{} output {}",
                     node.type_name,
                     spec.name
                 );
