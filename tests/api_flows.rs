@@ -190,7 +190,7 @@ async fn flow_crud_run_and_jobs_via_rest() {
         .oneshot(Request::get(base.clone()).body(Body::empty()).unwrap())
         .await
         .unwrap();
-    let flows = json_response(listed)["flows"]
+    let flows = json_response(listed).await["flows"]
         .as_array()
         .expect("flows list")
         .clone();
@@ -206,7 +206,7 @@ async fn flow_crud_run_and_jobs_via_rest() {
         )
         .await
         .unwrap();
-    assert_eq!(json_response(fetched)["name"], "echo-flow");
+    assert_eq!(json_response(fetched).await["name"], "echo-flow");
 
     let run = app
         .clone()
@@ -219,7 +219,7 @@ async fn flow_crud_run_and_jobs_via_rest() {
         .await
         .unwrap();
     assert_eq!(run.status(), StatusCode::ACCEPTED);
-    let job_id = json_response(run)["job_id"]
+    let job_id = json_response(run).await["job_id"]
         .as_str()
         .expect("job id")
         .to_string();
@@ -236,7 +236,7 @@ async fn flow_crud_run_and_jobs_via_rest() {
         )
         .await
         .unwrap();
-    assert_eq!(json_response(disabled)["enabled"], false);
+    assert_eq!(json_response(disabled).await["enabled"], false);
 
     let rejected = app
         .clone()
@@ -265,7 +265,7 @@ async fn flow_crud_run_and_jobs_via_rest() {
         .await
         .unwrap();
     assert_eq!(updated.status(), StatusCode::OK);
-    assert_eq!(json_response(updated)["description"], "renamed later");
+    assert_eq!(json_response(updated).await["description"], "renamed later");
 
     let deleted = app
         .clone()
@@ -402,7 +402,7 @@ async fn flow_shell_kill_switch_blocks_shell_node() {
         )
         .await
         .unwrap();
-    let flow_id = json_response(created)["id"].as_i64().unwrap();
+    let flow_id = json_response(created).await["id"].as_i64().unwrap();
 
     let run = app
         .oneshot(
@@ -416,7 +416,10 @@ async fn flow_shell_kill_switch_blocks_shell_node() {
         )
         .await
         .unwrap();
-    let job_id = json_response(run)["job_id"].as_str().unwrap().to_string();
+    let job_id = json_response(run).await["job_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let job = wait_for_job(&state, project.id.get(), &job_id).await;
     assert_eq!(job["state"], "failed", "{job}");
     let error = job["error"].as_str().expect("error message");
