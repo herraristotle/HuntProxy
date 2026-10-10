@@ -554,6 +554,7 @@ mod tests {
         definition.graph.nodes.push(FlowNode {
             node_type: "flow/template".into(),
             alias: "sink".into(),
+            display: None,
             inputs: BTreeMap::from([(
                 "template".into(),
                 FlowProperty::Const {

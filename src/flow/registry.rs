@@ -337,7 +337,7 @@ mod tests {
                 assert!(!node.exec_out.is_empty());
             }
             let mut input_ports = std::collections::BTreeSet::new();
-            for spec in &node.inputs {
+            for spec in node.inputs {
                 assert!(
                     input_ports.insert(spec.name),
                     "{} input {}",
