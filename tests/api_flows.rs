@@ -392,6 +392,7 @@ async fn flow_shell_kill_switch_blocks_shell_node() {
         }
     });
     let created = app
+        .clone()
         .oneshot(
             Request::post(format!("/api/v1/projects/{}/flows", project.id.get()))
                 .header("content-type", "application/json")
