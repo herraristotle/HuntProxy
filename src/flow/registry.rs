@@ -3,7 +3,8 @@
 
 use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ValueKind {
     Any,
     String,
@@ -43,7 +44,7 @@ impl ValueKind {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct PortSpec {
     pub name: &'static str,
     pub kind: ValueKind,
@@ -76,7 +77,7 @@ impl PortSpec {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct NodeInfo {
     pub type_name: &'static str,
     pub display: &'static str,

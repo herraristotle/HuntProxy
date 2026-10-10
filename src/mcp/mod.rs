@@ -330,6 +330,8 @@ fn tool_defs() -> Value {
         {"name":"history_search","description":"Search saved project history without hiding hosts or MIME types. Active browser responses appear after capture completion. Supports AND/OR/NOT, parentheses, and quoted values. Examples: method:PUT; exchange_id:3011; status:[404,500]; has(error); response:~\"set-cookie\"; path=~^/api/; header[\"Server\"]:nginx; (request:~this OR request:~that) method:PUT. Full request/response search can scan decoded bodies, so narrow large projects with host, method, source, size, or time terms.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"q":{"type":"string","description":"field:value is exact; field:~value contains; field!=value excludes and keeps rows where the column is NULL (failed exchanges). field=~re and field!=~re are case-sensitive regex (use (?i) to ignore case). field:[a,b] matches any list element. has(field)/missing(field) test presence. request:~text and response:~text search the request/response target, headers, and decoded body and can be expensive on broad queries. header:~text matches a header name or value; header[\"Name\"]:value, req_header[\"Name\"]:value, and resp_header[\"Name\"]:value scope by header. Fields: exchange_id, host, authority, path, method, protocol, status, mime, source, label, request_size, response_size, duration, title, parent, browser_session, capture_session, reply_tab, fuzz_job, request_hash, response_hash, time, error, request, response, header, req_header, resp_header. Adjacent terms are AND; explicit AND/OR/NOT and parentheses are supported."},"limit":{"type":"integer","minimum":1,"maximum":500}},"required":["project_id"],"additionalProperties":false}},
         {"name":"sitemap","description":"Discover saved routes without oversized responses. Omit host for a lightweight list of hosts and route counts. Provide one exact host for its detailed route tree, optionally limited to a path subtree.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"host":{"type":"string","description":"Optional exact hostname, case-insensitive. Omit for host summaries."},"path_prefix":{"type":"string","description":"Optional slash-boundary path subtree, such as /api. Requires host."}},"required":["project_id"],"additionalProperties":false}},
         {"name":"findings","description":"List findings, mark an exchange as a finding, or remove a finding.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","add","remove"]},"exchange_id":{"type":"integer","description":"Required for add."},"finding_id":{"type":"integer","description":"Required for remove."},"title":{"type":"string","description":"Required for add."},"description":{"type":"string","description":"Required for add."}},"required":["project_id","action"]}},
+        {"name":"flows","description":"List, create, update, delete, enable, disable, run, and inspect project graph flows and their jobs. create/update take a definition: {edition,kind,name,description,graph:{nodes:[{type,alias,inputs}],edges:[{source:{node,port},target:{node,port}}]}}. run starts a manual run of an active flow and returns job_id; passive flows run automatically on recorded exchanges. job_get/job_cancel manage runs by job_id. Use flow_nodes for the node catalog.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","create","get","update","delete","enable","disable","run","jobs","job_get","job_cancel"]},"flow_id":{"type":"integer","description":"Required for get, update, delete, enable, disable, run."},"job_id":{"type":"string","format":"uuid","description":"Required for job_get and job_cancel."},"definition":{"type":"object","description":"Required for create and update."},"enabled":{"type":"boolean","description":"Optional on update; enable/disable actions ignore this."},"input":{"type":"object","description":"Optional manual trigger input for run.","default":{}}},"required":["project_id","action"],"additionalProperties":false}},
+        {"name":"flow_nodes","description":"List the flow node catalog: each node type with its display name, category, trigger role, inputs, outputs, and exec ports.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
         {"name":"exchange_get","description":"Get exchange detail (secrets redacted)","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer"}},"required":["project_id","exchange_id"]}},
         {"name":"exchange_compare","description":"Compare the saved request and response of two exchanges. Sensitive values stay redacted, while changes are still detected. Text body diffs are bounded.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"left_exchange_id":{"type":"integer"},"right_exchange_id":{"type":"integer"},"include_noisy_headers":{"type":"boolean","default":false}},"required":["project_id","left_exchange_id","right_exchange_id"],"additionalProperties":false}},
         {"name":"page_analyzer","description":"Extract sorted, unique endpoints, absolute URLs, and emails from JavaScript or HTML without executing it. Provide exactly one saved exchange_id or absolute URL. URL mode sends a semantic GET with project cookies and analyzes the complete response; secrets are never scanned or returned.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer","description":"Saved exchange whose decoded response body should be analyzed."},"url":{"type":"string","description":"Absolute http/https URL to fetch and analyze."}},"required":["project_id"],"oneOf":[{"required":["exchange_id"]},{"required":["url"]}],"additionalProperties":false}},
@@ -1171,6 +1173,138 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 _ => Err(DomainError::invalid("action must be list|add|remove")),
             }
         }
+        "flows" => {
+            let project_id = require_project_id(&args)?;
+            let action = args.get("action").and_then(Value::as_str).unwrap_or("list");
+            let flow_id = args.get("flow_id").and_then(Value::as_i64).map(FlowId);
+            match action {
+                "list" => Ok(json!({
+                    "flows": state.db.list_flows(project_id).await?
+                })),
+                "create" => {
+                    let definition: FlowDefinition = serde_json::from_value(
+                        args.get("definition")
+                            .cloned()
+                            .ok_or_else(|| DomainError::invalid("definition required"))?,
+                    )
+                    .map_err(|error| DomainError::invalid(format!("flow definition: {error}")))?;
+                    let flow = state.db.create_flow(project_id, definition).await?;
+                    emit_event(
+                        &state,
+                        project_id,
+                        "flow",
+                        json!({ "flow_id": flow.id.get(), "action": "created" }),
+                    );
+                    Ok(json!(flow))
+                }
+                "get" => {
+                    let flow_id =
+                        flow_id.ok_or_else(|| DomainError::invalid("flow_id required"))?;
+                    Ok(json!(state.db.get_flow(project_id, flow_id).await?))
+                }
+                "update" => {
+                    let flow_id =
+                        flow_id.ok_or_else(|| DomainError::invalid("flow_id required"))?;
+                    let definition: FlowDefinition = serde_json::from_value(
+                        args.get("definition")
+                            .cloned()
+                            .ok_or_else(|| DomainError::invalid("definition required"))?,
+                    )
+                    .map_err(|error| DomainError::invalid(format!("flow definition: {error}")))?;
+                    let enabled = args.get("enabled").and_then(Value::as_bool);
+                    let flow = state
+                        .db
+                        .update_flow(project_id, flow_id, definition, enabled)
+                        .await?;
+                    emit_event(
+                        &state,
+                        project_id,
+                        "flow",
+                        json!({ "flow_id": flow.id.get(), "action": "updated" }),
+                    );
+                    Ok(json!(flow))
+                }
+                "delete" => {
+                    let flow_id =
+                        flow_id.ok_or_else(|| DomainError::invalid("flow_id required"))?;
+                    state.db.delete_flow(project_id, flow_id).await?;
+                    emit_event(
+                        &state,
+                        project_id,
+                        "flow",
+                        json!({ "flow_id": flow_id.get(), "action": "removed" }),
+                    );
+                    Ok(json!({ "deleted": flow_id.get() }))
+                }
+                "enable" | "disable" => {
+                    let flow_id =
+                        flow_id.ok_or_else(|| DomainError::invalid("flow_id required"))?;
+                    let enabled = action == "enable";
+                    state
+                        .db
+                        .set_flow_enabled(project_id, flow_id, enabled)
+                        .await?;
+                    emit_event(
+                        &state,
+                        project_id,
+                        "flow",
+                        json!({
+                            "flow_id": flow_id.get(),
+                            "action": if enabled { "enabled" } else { "disabled" },
+                        }),
+                    );
+                    Ok(json!({ "flow_id": flow_id.get(), "enabled": enabled }))
+                }
+                "run" => {
+                    let flow_id =
+                        flow_id.ok_or_else(|| DomainError::invalid("flow_id required"))?;
+                    let input = args.get("input").cloned().unwrap_or(Value::Null);
+                    let job_id = state
+                        .flows
+                        .run_now(
+                            project_id,
+                            flow_id,
+                            crate::flow::FlowTrigger::Manual(Value::Null),
+                            input,
+                        )
+                        .await?;
+                    Ok(json!({ "job_id": job_id.to_string() }))
+                }
+                "jobs" => Ok(json!({
+                    "jobs": state.flows.list_jobs(project_id).await
+                })),
+                "job_get" => {
+                    let job_id = args
+                        .get("job_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| DomainError::invalid("job_id required"))?;
+                    let job_id = uuid::Uuid::parse_str(job_id)
+                        .map_err(|_| DomainError::invalid("invalid job_id"))?;
+                    match state.flows.get_job(job_id).await {
+                        Some(view) if view.project_id == project_id => Ok(json!(view)),
+                        _ => Err(DomainError::not_found("flow job")),
+                    }
+                }
+                "job_cancel" => {
+                    let job_id = args
+                        .get("job_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| DomainError::invalid("job_id required"))?;
+                    let job_id = uuid::Uuid::parse_str(job_id)
+                        .map_err(|_| DomainError::invalid("invalid job_id"))?;
+                    match state.flows.get_job(job_id).await {
+                        Some(view) if view.project_id == project_id => {}
+                        _ => return Err(DomainError::not_found("flow job")),
+                    }
+                    state.flows.cancel_job(job_id).await?;
+                    Ok(json!({ "cancelled": job_id.to_string() }))
+                }
+                other => Err(DomainError::invalid(format!(
+                    "unknown flows action `{other}`"
+                ))),
+            }
+        }
+        "flow_nodes" => Ok(json!({ "nodes": crate::flow::node_catalog() })),
         "exchange_get" => {
             let project_id = require_project_id(&args)?;
             let eid = args

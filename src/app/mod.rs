@@ -371,6 +371,7 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
         config.flows.allow_shell,
         shutdown.clone(),
     );
+    flows.set_events(events.clone());
     Ok(Arc::new(AppState {
         db,
         config,

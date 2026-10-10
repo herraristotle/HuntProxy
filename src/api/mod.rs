@@ -207,6 +207,38 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/v1/projects/{id}/findings/{fid}",
             delete(delete_finding),
         )
+        .route("/api/v1/flow-nodes", get(flow_node_catalog))
+        .route(
+            "/api/v1/projects/{id}/flows",
+            get(list_flows)
+                .post(create_flow)
+                .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/projects/{id}/flows/{fid}",
+            get(get_flow)
+                .put(update_flow_handler)
+                .delete(delete_flow_handler)
+                .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/projects/{id}/flows/{fid}/run",
+            post(run_flow_handler),
+        )
+        .route(
+            "/api/v1/projects/{id}/flows/{fid}/enable",
+            post(enable_flow),
+        )
+        .route(
+            "/api/v1/projects/{id}/flows/{fid}/disable",
+            post(disable_flow),
+        )
+        .route("/api/v1/projects/{id}/flow-jobs", get(list_flow_jobs))
+        .route("/api/v1/projects/{id}/flow-jobs/{jid}", get(get_flow_job))
+        .route(
+            "/api/v1/projects/{id}/flow-jobs/{jid}/cancel",
+            post(cancel_flow_job),
+        )
         .route(
             "/api/v1/projects/{id}/exchanges/compare",
             get(compare_exchanges),
@@ -1365,6 +1397,217 @@ async fn delete_finding(
             });
             StatusCode::NO_CONTENT.into_response()
         }
+        Err(error) => error_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateFlowBody {
+    definition: FlowDefinition,
+}
+
+#[derive(Deserialize)]
+struct UpdateFlowBody {
+    definition: FlowDefinition,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct RunFlowBody {
+    #[serde(default)]
+    input: Option<serde_json::Value>,
+}
+
+async fn flow_node_catalog() -> Response {
+    Json(serde_json::json!({ "nodes": crate::flow::node_catalog() })).into_response()
+}
+
+async fn list_flows(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    match state.db.list_flows(ProjectId(id)).await {
+        Ok(flows) => Json(serde_json::json!({ "flows": flows })).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn create_flow(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<CreateFlowBody>,
+) -> Response {
+    match state.db.create_flow(ProjectId(id), body.definition).await {
+        Ok(flow) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "flow".into(),
+                payload: serde_json::json!({
+                    "flow_id": flow.id.get(),
+                    "action": "created",
+                }),
+            });
+            (StatusCode::CREATED, Json(flow)).into_response()
+        }
+        Err(error) => error_response(error),
+    }
+}
+
+async fn get_flow(
+    State(state): State<Arc<AppState>>,
+    Path((id, flow_id)): Path<(i64, i64)>,
+) -> Response {
+    match state.db.get_flow(ProjectId(id), FlowId(flow_id)).await {
+        Ok(flow) => Json(flow).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn update_flow_handler(
+    State(state): State<Arc<AppState>>,
+    Path((id, flow_id)): Path<(i64, i64)>,
+    Json(body): Json<UpdateFlowBody>,
+) -> Response {
+    match state
+        .db
+        .update_flow(
+            ProjectId(id),
+            FlowId(flow_id),
+            body.definition,
+            body.enabled,
+        )
+        .await
+    {
+        Ok(flow) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "flow".into(),
+                payload: serde_json::json!({
+                    "flow_id": flow.id.get(),
+                    "action": "updated",
+                    "enabled": flow.enabled,
+                }),
+            });
+            Json(flow).into_response()
+        }
+        Err(error) => error_response(error),
+    }
+}
+
+async fn delete_flow_handler(
+    State(state): State<Arc<AppState>>,
+    Path((id, flow_id)): Path<(i64, i64)>,
+) -> Response {
+    match state.db.delete_flow(ProjectId(id), FlowId(flow_id)).await {
+        Ok(()) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "flow".into(),
+                payload: serde_json::json!({
+                    "flow_id": flow_id,
+                    "action": "removed",
+                }),
+            });
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(error) => error_response(error),
+    }
+}
+
+async fn set_flow_enabled_handler(
+    state: &Arc<AppState>,
+    id: i64,
+    flow_id: i64,
+    enabled: bool,
+) -> Response {
+    match state
+        .db
+        .set_flow_enabled(ProjectId(id), FlowId(flow_id), enabled)
+        .await
+    {
+        Ok(()) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "flow".into(),
+                payload: serde_json::json!({
+                    "flow_id": flow_id,
+                    "action": if enabled { "enabled" } else { "disabled" },
+                }),
+            });
+            Json(serde_json::json!({ "flow_id": flow_id, "enabled": enabled })).into_response()
+        }
+        Err(error) => error_response(error),
+    }
+}
+
+async fn enable_flow(
+    State(state): State<Arc<AppState>>,
+    Path((id, flow_id)): Path<(i64, i64)>,
+) -> Response {
+    set_flow_enabled_handler(&state, id, flow_id, true).await
+}
+
+async fn disable_flow(
+    State(state): State<Arc<AppState>>,
+    Path((id, flow_id)): Path<(i64, i64)>,
+) -> Response {
+    set_flow_enabled_handler(&state, id, flow_id, false).await
+}
+
+async fn run_flow_handler(
+    State(state): State<Arc<AppState>>,
+    Path((id, flow_id)): Path<(i64, i64)>,
+    Json(body): Json<RunFlowBody>,
+) -> Response {
+    let input = body.input.unwrap_or(serde_json::Value::Null);
+    match state
+        .flows
+        .run_now(
+            ProjectId(id),
+            FlowId(flow_id),
+            crate::flow::FlowTrigger::Manual(serde_json::Value::Null),
+            input,
+        )
+        .await
+    {
+        Ok(job_id) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({ "job_id": job_id.to_string() })),
+        )
+            .into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn list_flow_jobs(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    let jobs = state.flows.list_jobs(ProjectId(id)).await;
+    Json(serde_json::json!({ "jobs": jobs })).into_response()
+}
+
+async fn get_flow_job(
+    State(state): State<Arc<AppState>>,
+    Path((id, job_id)): Path<(i64, String)>,
+) -> Response {
+    let Ok(job_id) = uuid::Uuid::parse_str(&job_id) else {
+        return error_response(DomainError::invalid("invalid job id"));
+    };
+    match state.flows.get_job(job_id).await {
+        Some(view) if view.project_id == ProjectId(id) => Json(view).into_response(),
+        Some(_) | None => error_response(DomainError::not_found("flow job")),
+    }
+}
+
+async fn cancel_flow_job(
+    State(state): State<Arc<AppState>>,
+    Path((id, job_id)): Path<(i64, String)>,
+) -> Response {
+    let Ok(job_id) = uuid::Uuid::parse_str(&job_id) else {
+        return error_response(DomainError::invalid("invalid job id"));
+    };
+    match state.flows.get_job(job_id).await {
+        Some(view) if view.project_id == ProjectId(id) => {}
+        _ => return error_response(DomainError::not_found("flow job")),
+    }
+    match state.flows.cancel_job(job_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => error_response(error),
     }
 }

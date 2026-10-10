@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -60,6 +61,7 @@ pub struct FlowService {
     allow_shell: bool,
     shutdown: CancellationToken,
     jobs: Arc<Mutex<HashMap<Uuid, JobEntry>>>,
+    events: std::sync::Mutex<Option<broadcast::Sender<crate::app::AppEvent>>>,
 }
 
 impl FlowService {
@@ -75,7 +77,13 @@ impl FlowService {
             allow_shell,
             shutdown,
             jobs: Arc::new(Mutex::new(HashMap::new())),
+            events: std::sync::Mutex::new(None),
         })
+    }
+
+    /// Publishes job state changes as `kind: "flow"` app events for SSE/UI.
+    pub fn set_events(&self, tx: broadcast::Sender<crate::app::AppEvent>) {
+        *self.events.lock().expect("flow events lock") = Some(tx);
     }
 
     /// Runs a flow now. The trigger must match the flow kind: exchange for
@@ -237,6 +245,7 @@ impl FlowService {
         let shutdown = self.shutdown.clone();
         let run_cancel = cancel.clone();
         let job_cancel = cancel;
+        let events = self.events.lock().expect("flow events lock").clone();
         tokio::spawn(async move {
             let handler = BuiltInHandler::new(Some(db), reply, allow_shell);
             let options = FlowRunOptions {
@@ -256,7 +265,7 @@ impl FlowService {
                 result = super::interp::run_flow(&definition, trigger, &handler, &options) => result,
             };
             let mut jobs = jobs.lock().await;
-            if let Some(entry) = jobs.get_mut(&job_id) {
+            let final_view = jobs.get_mut(&job_id).map(|entry| {
                 match outcome {
                     Ok(outcome) => {
                         entry.view.state = if job_cancel.is_cancelled() || shutdown.is_cancelled() {
@@ -276,6 +285,20 @@ impl FlowService {
                         entry.view.duration_ms = Some(started.elapsed().as_millis() as u64);
                     }
                 }
+                entry.view.clone()
+            });
+            drop(jobs);
+            if let (Some(view), Some(events)) = (final_view, events) {
+                let _ = events.send(crate::app::AppEvent {
+                    project_id: project_id.get(),
+                    kind: "flow".into(),
+                    payload: serde_json::json!({
+                        "job_id": view.id.to_string(),
+                        "flow_id": view.flow_id.get(),
+                        "state": view.state,
+                        "error": view.error,
+                    }),
+                });
             }
         });
         Ok(job_id)
