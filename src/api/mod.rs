@@ -1415,8 +1415,9 @@ struct CreateFlowBody {
 
 #[derive(Deserialize)]
 struct ImportFlowBody {
-    /// A raw Caido workflow definition (the JSON file exported from Caido's
-    /// workflow UI). Converted to the native format before storage.
+    /// A native HuntProxy flow definition (edition 1), as shipped in the
+    /// workflow pack. Caido store definitions are not accepted at runtime;
+    /// port them offline instead.
     definition: serde_json::Value,
 }
 
@@ -1474,9 +1475,13 @@ async fn import_flow(
         serde_json::Value::String(text) => text.clone(),
         other => other.to_string(),
     };
-    let definition = match crate::flow::import_caido_definition(&raw) {
+    let definition = match serde_json::from_str::<FlowDefinition>(&raw) {
         Ok(definition) => definition,
-        Err(error) => return error_response(error),
+        Err(error) => {
+            return error_response(DomainError::invalid(format!(
+                "definition is not a native HuntProxy flow: {error}"
+            )))
+        }
     };
     if let Err(error) = crate::flow::validate_flow(&definition) {
         return error_response(error);

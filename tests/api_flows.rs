@@ -499,12 +499,8 @@ async fn flow_shell_kill_switch_blocks_shell_node() {
     assert!(error.contains("shell node is disabled"), "{error}");
 }
 
-const CAIDO_BASE64_DECODE: &str = include_str!("fixtures/caido/base64-decode.json");
-const CAIDO_COLOR_NAV: &str = include_str!("fixtures/caido/color-top-level-navigation.json");
-const CAIDO_EVALSSO: &str = include_str!("fixtures/caido/evalsso.json");
-
 #[tokio::test]
-async fn import_caido_convert_flow_and_run() {
+async fn import_accepts_native_definitions() {
     let (_directory, state, project_id) = test_state().await;
     let app = huntproxy::api::router(state.clone());
 
@@ -517,16 +513,92 @@ async fn import_caido_convert_flow_and_run() {
             ))
             .header("content-type", "application/json")
             .body(Body::from(
-                serde_json::json!({ "definition": CAIDO_BASE64_DECODE }).to_string(),
+                serde_json::json!({ "definition": color_flow("native-import", "teal") })
+                    .to_string(),
             ))
             .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED, "{}", {
-        let bytes = response.into_body().collect().await.unwrap().to_bytes();
-        String::from_utf8_lossy(&bytes).to_string()
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let flow = json_response(response).await;
+    assert_eq!(flow["kind"], "passive");
+    assert_eq!(flow["definition"]["edition"], 1);
+}
+
+#[tokio::test]
+async fn import_rejects_caido_definitions() {
+    let (_directory, state, project_id) = test_state().await;
+    let app = huntproxy::api::router(state.clone());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/projects/{}/flows/import",
+                project_id.get()
+            ))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "definition": {
+                        "edition": 2,
+                        "kind": "passive",
+                        "name": "Caido shape",
+                        "graph": {"nodes": [], "edges": []}
+                    }
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = json_response(response).await;
+    let message = body["message"].as_str().unwrap_or_default();
+    assert!(message.contains("edition 2"), "{message}");
+}
+
+#[tokio::test]
+async fn import_native_convert_flow_and_run() {
+    let (_directory, state, project_id) = test_state().await;
+    let app = huntproxy::api::router(state.clone());
+
+    let definition = serde_json::json!({
+        "edition": 1,
+        "kind": "convert",
+        "name": "Base64 decode",
+        "graph": {
+            "nodes": [
+                {"type": "flow/manual-start", "alias": "start", "inputs": {}},
+                {"type": "flow/js", "alias": "decode", "inputs": {
+                    "input": {"kind": "ref", "node": "start", "output": "input"},
+                    "code": {"kind": "const", "value": "function run(input) {\n  var chars = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n  var s = String(input).replace(/[^A-Za-z0-9+/]/g, \"\");\n  var out = \"\";\n  for (var i = 0; i < s.length; i += 4) {\n    var group = s.substr(i, 4);\n    var n = 0;\n    for (var k = 0; k < 4; k++) n = (n << 6) | (group.length > k ? chars.indexOf(group.charAt(k)) : 0);\n    var have = group.length;\n    out += String.fromCharCode((n >> 16) & 255);\n    if (have >= 3) out += String.fromCharCode((n >> 8) & 255);\n    if (have >= 4) out += String.fromCharCode(n & 255);\n  }\n  return out;\n}"}
+                }}
+            ],
+            "edges": [
+                {"source": {"node": "start", "port": "exec"},
+                 "target": {"node": "decode", "port": "exec"}}
+            ]
+        }
     });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/projects/{}/flows/import",
+                project_id.get()
+            ))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "definition": definition }).to_string(),
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
     let flow = json_response(response).await;
     assert_eq!(flow["kind"], "convert");
     let flow_id = flow["id"].as_i64().expect("flow id");
@@ -555,130 +627,8 @@ async fn import_caido_convert_flow_and_run() {
     let job = wait_for_job(&state, project_id.get(), &job_id).await;
     assert_eq!(job["state"], "succeeded", "{job}");
     assert_eq!(
-        job["outcome"]["outputs"]["base64_decode.output"], "hello",
+        job["outcome"]["outputs"]["decode.output"], "hello",
         "job: {job}"
-    );
-}
-
-#[tokio::test]
-async fn import_caido_passive_flow_creates_nodes() {
-    let (_directory, state, project_id) = test_state().await;
-    let app = huntproxy::api::router(state.clone());
-
-    let response = app
-        .clone()
-        .oneshot(
-            Request::post(format!(
-                "/api/v1/projects/{}/flows/import",
-                project_id.get()
-            ))
-            .header("content-type", "application/json")
-            .body(Body::from(
-                serde_json::json!({ "definition": CAIDO_COLOR_NAV }).to_string(),
-            ))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let flow = json_response(response).await;
-    assert_eq!(flow["kind"], "passive");
-    let definition = &flow["definition"];
-    let types: Vec<&str> = definition["graph"]["nodes"]
-        .as_array()
-        .expect("nodes")
-        .iter()
-        .map(|n| n["type"].as_str().unwrap())
-        .collect();
-    assert!(types.contains(&"flow/query-match"), "{types:?}");
-    assert!(types.contains(&"flow/if-else"), "{types:?}");
-    assert!(types.contains(&"flow/set-color"), "{types:?}");
-    assert!(types.contains(&"flow/on-intercept-response"), "{types:?}");
-}
-
-#[tokio::test]
-async fn import_caido_evalsso_with_scope_and_findings() {
-    let (_directory, state, project_id) = test_state().await;
-    let app = huntproxy::api::router(state.clone());
-
-    let response = app
-        .clone()
-        .oneshot(
-            Request::post(format!(
-                "/api/v1/projects/{}/flows/import",
-                project_id.get()
-            ))
-            .header("content-type", "application/json")
-            .body(Body::from(
-                serde_json::json!({ "definition": CAIDO_EVALSSO }).to_string(),
-            ))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED, "evalsso import");
-    let flow = json_response(response).await;
-    let types: Vec<&str> = flow["definition"]["graph"]["nodes"]
-        .as_array()
-        .expect("nodes")
-        .iter()
-        .map(|n| n["type"].as_str().unwrap())
-        .collect();
-    assert!(types.contains(&"flow/in-scope"), "{types:?}");
-    assert!(types.contains(&"flow/report-finding"), "{types:?}");
-    assert!(types.contains(&"flow/query-match"), "{types:?}");
-}
-
-#[tokio::test]
-async fn imports_http_code_js_with_named_node() {
-    let (_directory, state, project_id) = test_state().await;
-    let app = huntproxy::api::router(state.clone());
-
-    let definition = serde_json::json!({
-        "edition": 2,
-        "kind": "active",
-        "name": "CORS checker",
-        "description": "",
-        "graph": {
-            "edges": [],
-            "nodes": [
-                {"alias": "start", "definition_id": "caido/active-start", "id": 0, "inputs": []},
-                {"alias": "js", "definition_id": "caido/http-code-js", "id": 1,
-                 "inputs": [{"alias": "code", "value": {"data": "return 1;", "kind": "string"}}]}
-            ]
-        }
-    });
-    let response = app
-        .clone()
-        .oneshot(
-            Request::post(format!(
-                "/api/v1/projects/{}/flows/import",
-                project_id.get()
-            ))
-            .header("content-type", "application/json")
-            .body(Body::from(
-                serde_json::json!({ "definition": definition }).to_string(),
-            ))
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let flow = json_response(response).await;
-    let definition = &flow["definition"];
-    let js = definition["graph"]["nodes"]
-        .as_array()
-        .expect("nodes")
-        .iter()
-        .find(|n| n["alias"] == "js")
-        .expect("js node");
-    assert_eq!(js["type"], "flow/js");
-    assert!(
-        js["inputs"]["code"]["value"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("return 1;"),
-        "js node: {js}"
     );
 }
 

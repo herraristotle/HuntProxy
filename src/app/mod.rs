@@ -369,6 +369,7 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
         db.clone(),
         Some(reply.clone()),
         config.flows.allow_shell,
+        config.flows.allow_js_network,
         shutdown.clone(),
     );
     flows.set_events(events.clone());

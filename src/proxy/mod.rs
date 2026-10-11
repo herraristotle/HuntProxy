@@ -1095,6 +1095,7 @@ mod tests {
             db.clone(),
             Some(reply.clone()),
             config.flows.allow_shell,
+            config.flows.allow_js_network,
             shutdown.clone(),
         );
         let state = Arc::new(AppState {

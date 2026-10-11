@@ -1206,7 +1206,12 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         Value::String(text) => text.clone(),
                         other => other.to_string(),
                     };
-                    let definition = crate::flow::import_caido_definition(&raw)?;
+                    let definition: FlowDefinition =
+                        serde_json::from_str(&raw).map_err(|error| {
+                            DomainError::invalid(format!(
+                                "definition is not a native HuntProxy flow: {error}"
+                            ))
+                        })?;
                     crate::flow::validate_flow(&definition)?;
                     let flow = state.db.create_flow(project_id, definition).await?;
                     emit_event(
