@@ -345,6 +345,75 @@ async fn passive_flow_colors_recorded_exchange() {
 }
 
 #[tokio::test]
+async fn js_sdk_findings_create_persists_finding() {
+    let (_directory, state, project_id) = test_state().await;
+    let app = huntproxy::api::router(state.clone());
+
+    let definition = serde_json::json!({
+        "edition": 1,
+        "kind": "passive",
+        "name": "js findings",
+        "graph": {
+            "nodes": [
+                {"type": "flow/on-intercept-response", "alias": "start", "inputs": {}},
+                {"type": "flow/js", "alias": "report", "inputs": {
+                    "code": {"kind": "const", "value": "function run(input, sdk) { sdk.findings.create({ title: \"js leak\", description: \"found by script\" }); return \"done\"; }"}
+                }}
+            ],
+            "edges": [
+                {"source": {"node": "start", "port": "exec"},
+                 "target": {"node": "report", "port": "exec"}}
+            ]
+        }
+    });
+    let created = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{}/flows", project_id.get()))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "definition": definition }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+
+    let exchange_id = state
+        .db
+        .insert_exchange(exchange(project_id, "/js-findings"))
+        .await
+        .unwrap();
+    let spawned = state
+        .flows
+        .trigger_passive(
+            project_id,
+            serde_json::json!({
+                "exchange_id": exchange_id.get(),
+                "source": "proxy",
+                "status": 200,
+                "method": "GET",
+                "scheme": "https",
+                "authority": "example.com",
+                "path": "/js-findings",
+                "query": null,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(spawned.len(), 1);
+    let job = wait_for_job(&state, project_id.get(), &spawned[0].to_string()).await;
+    assert_eq!(job["state"], "succeeded", "{job}");
+
+    let findings = state.db.list_findings(project_id).await.unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].title, "js leak");
+    assert_eq!(findings[0].description, "found by script");
+    assert_eq!(findings[0].exchange_id, exchange_id);
+}
+
+#[tokio::test]
 async fn flow_shell_kill_switch_blocks_shell_node() {
     let directory = tempfile::tempdir().unwrap();
     let config = Config {
@@ -561,7 +630,7 @@ async fn import_caido_evalsso_with_scope_and_findings() {
 }
 
 #[tokio::test]
-async fn import_rejects_http_code_js_with_named_node() {
+async fn imports_http_code_js_with_named_node() {
     let (_directory, state, project_id) = test_state().await;
     let app = huntproxy::api::router(state.clone());
 
@@ -594,10 +663,23 @@ async fn import_rejects_http_code_js_with_named_node() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    let body = json_response(response).await;
-    let message = body["message"].as_str().unwrap_or_default();
-    assert!(message.contains("http-code-js"), "{message}");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let flow = json_response(response).await;
+    let definition = &flow["definition"];
+    let js = definition["graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["alias"] == "js")
+        .expect("js node");
+    assert_eq!(js["type"], "flow/js");
+    assert!(
+        js["inputs"]["code"]["value"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("return 1;"),
+        "js node: {js}"
+    );
 }
 
 #[tokio::test]

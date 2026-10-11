@@ -37,6 +37,7 @@ pub struct JsHost {
     pub reply: Option<Arc<ReplyService>>,
     pub db: Option<Arc<Db>>,
     pub project_id: ProjectId,
+    pub exchange_id: Option<i64>,
 }
 
 impl JsHost {
@@ -47,6 +48,7 @@ impl JsHost {
             reply: None,
             db: None,
             project_id: ProjectId::from(0),
+            exchange_id: None,
         }
     }
 }
@@ -56,6 +58,7 @@ struct HostInner {
     reply: Option<Arc<ReplyService>>,
     db: Option<Arc<Db>>,
     project_id: ProjectId,
+    exchange_id: Option<i64>,
     deadline: Instant,
     cancel: CancellationToken,
 }
@@ -114,6 +117,7 @@ fn run_js_sync(
         reply: host.reply,
         db: host.db,
         project_id: host.project_id,
+        exchange_id: host.exchange_id,
         deadline,
         cancel,
     });
@@ -234,7 +238,59 @@ fn register_host(ctx: &Ctx<'_>, inner: &Arc<HostInner>) -> rquickjs::Result<()> 
         },
     )?;
     ctx.globals().set("__hp_exchange", exchange)?;
+    let finding_inner = inner.clone();
+    let finding = Function::new(ctx.clone(), move |_ctx: Ctx<'_>, payload: String| {
+        Ok::<String, rquickjs::Error>(host_finding_create(&finding_inner, &payload))
+    })?;
+    ctx.globals().set("__hp_finding_create", finding)?;
     Ok(())
+}
+
+/// Creates a finding attached to the flow's triggering exchange, backing
+/// `sdk.findings.create`. The payload carries the Caido finding shape;
+/// `dedupe_key` and `severity` are accepted and ignored (no equivalent).
+fn host_finding_create(inner: &HostInner, payload: &str) -> String {
+    let Some(db) = inner.db.clone() else {
+        return err_json("sdk.findings.create requires the database");
+    };
+    let Ok(spec) = serde_json::from_str::<Value>(payload) else {
+        return err_json("sdk.findings.create: invalid payload");
+    };
+    let title = spec
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let description = spec
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let Some(exchange_id) = inner.exchange_id else {
+        return err_json(
+            "sdk.findings.create requires an exchange-triggered flow (no exchange to attach to)",
+        );
+    };
+    let project_id = inner.project_id;
+    let cancel = inner.cancel.clone();
+    let handle = tokio::runtime::Handle::current();
+    let guarded = handle.block_on(async {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => None,
+            outcome = db.create_finding(project_id, ExchangeId::from(exchange_id), title, description) => Some(outcome),
+        }
+    });
+    match guarded {
+        None => err_json("flow js cancelled"),
+        Some(Ok(finding)) => json!({
+            "id": finding.id.get(),
+            "title": finding.title,
+            "description": finding.description,
+        })
+        .to_string(),
+        Some(Err(error)) => err_json(&error.to_string()),
+    }
 }
 
 fn host_send(inner: &HostInner, payload: &str) -> String {
@@ -1096,7 +1152,11 @@ var sdk = {
     inScope: __hp_not("sdk.requests.inScope"),
   },
   findings: {
-    create: __hp_not("sdk.findings.create"),
+    create: function (finding) {
+      var res = JSON.parse(__hp_finding_create(JSON.stringify(finding || {})));
+      if (res.error) throw new Error(res.error);
+      return res;
+    },
     get: __hp_not("sdk.findings.get"),
     exists: __hp_not("sdk.findings.exists"),
   },
@@ -1341,7 +1401,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn findings_create_reports_not_implemented() {
+    async fn findings_create_without_db_errors() {
         let output = run(
             r#"
             function run(input, sdk) {
@@ -1358,7 +1418,7 @@ mod tests {
         .await
         .unwrap();
         let text = output.as_str().unwrap_or_default();
-        assert!(text.contains("not implemented"), "{text}");
+        assert!(text.contains("requires the database"), "{text}");
     }
 
     #[tokio::test]

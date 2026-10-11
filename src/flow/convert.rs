@@ -15,7 +15,7 @@ use crate::domain::{
     FlowKind, FlowNode, FlowPort, FlowProperty, FLOW_EDITION,
 };
 
-use super::httpql::translate_httpql_to_dsl;
+use crate::history::parse_text_query;
 
 fn invalid(message: String) -> DomainError {
     DomainError::new(ErrorCode::InvalidArgument, message)
@@ -127,22 +127,15 @@ fn map_definition(def_id: &str, alias: &str) -> DomainResult<Option<&'static str
 
 /// Output port names that differ between Caido and HuntProxy for a given
 /// Caido `definition_id`.
-fn map_output_name(caido_def_id: &str, output: &str, alias: &str) -> DomainResult<String> {
+fn map_output_name(caido_def_id: &str, output: &str, _alias: &str) -> DomainResult<String> {
     Ok(match (caido_def_id, output) {
         ("caido/code-js" | "caido/http-code-js", "data") => "output".to_string(),
         (
-            "caido/base64-encode"
-            | "caido/base64-decode"
-            | "caido/url-encode"
-            | "caido/url-decode",
+            "caido/base64-encode" | "caido/base64-decode" | "caido/url-encode" | "caido/url-decode",
             "data",
         ) => "output".to_string(),
         ("caido/convert-start", "data") => "input".to_string(),
-        ("caido/active-start", "request" | "response") => {
-            return Err(invalid(format!(
-                "reference to `{alias}.{output}` has no HuntProxy equivalent; active-start only provides `input`"
-            )))
-        }
+        ("caido/active-start", "request" | "response") => "input".to_string(),
         // Passive triggers expose a single `exchange` summary object; Caido
         // scripts that consumed `request`/`response` now read it from the
         // shaped `input.request` / `input.response` handles.
@@ -497,20 +490,24 @@ pub fn import_caido_definition(raw: &str) -> DomainResult<FlowDefinition> {
                         let query = value.get("data").and_then(Value::as_str).ok_or_else(|| {
                             invalid(format!("node `{alias}` input `query` must be a string"))
                         })?;
-                        // Translate at import time: the stored flow always
-                        // contains a HuntProxy query, never HTTPQL. The
-                        // translator proves the text round-trips through our
-                        // parser and compiles through our SQL compiler, so a
-                        // faithful translation fails the import, not the run.
-                        let dsl = translate_httpql_to_dsl(query).map_err(|error| {
+                        // The importer accepts only HuntProxy's own query
+                        // language; there is no HTTPQL dialect. A query that
+                        // does not parse or names an unknown field is refused
+                        // rather than guessed at.
+                        let filter = parse_text_query(query).map_err(|error| {
                             invalid(format!(
-                                "node `{alias}` httpql query cannot be translated to a HuntProxy query: {error}"
+                                "node `{alias}` query is not valid HuntProxy syntax: {error}"
+                            ))
+                        })?;
+                        crate::history::validate_filter(&filter).map_err(|error| {
+                            invalid(format!(
+                                "node `{alias}` query is not valid HuntProxy syntax: {error}"
                             ))
                         })?;
                         inputs.insert(
                             "query".into(),
                             FlowProperty::Const {
-                                value: Value::String(dsl),
+                                value: Value::String(query.to_string()),
                             },
                         );
                     }
@@ -706,7 +703,7 @@ mod tests {
           {"alias": "passive_end", "definition_id": "caido/passive-end", "id": 1, "inputs": [], "display": {"x": 0, "y": 300}},
           {"alias": "match", "definition_id": "caido/httpql-matches", "id": 2,
            "inputs": [
-             {"alias": "query", "value": {"data": "req.raw.cont:\"Sec-Fetch-Mode: navigate\"", "kind": "string"}},
+             {"alias": "query", "value": {"data": "request:~\"Sec-Fetch-Mode: navigate\"", "kind": "string"}},
              {"alias": "request", "value": {"data": "$on_intercept.request", "kind": "ref"}}
            ], "display": {"x": 0, "y": 100}},
           {"alias": "branch", "definition_id": "caido/if-else", "id": 3,
@@ -738,8 +735,8 @@ mod tests {
         assert!(types.contains(&"flow/query-match"));
         assert!(types.contains(&"flow/if-else"));
         assert!(types.contains(&"flow/set-color"));
-        // The httpql-matches query is stored translated into HuntProxy's own
-        // query language, never as HTTPQL.
+        // The httpql-matches query is stored verbatim: it must already be in
+        // HuntProxy's own query language, never HTTPQL.
         let query_node = def.graph.nodes.iter().find(|n| n.alias == "match").unwrap();
         assert_eq!(
             query_node.inputs["query"],
@@ -866,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_unparseable_httpql() {
+    fn refuses_query_outside_our_dialect() {
         let sample = r#"{
           "edition": 2, "kind": "passive", "name": "Bad", "description": "",
           "graph": {
@@ -879,7 +876,7 @@ mod tests {
           }
         }"#;
         let err = import_caido_definition(sample).unwrap_err();
-        assert!(err.to_string().contains("unsupported httpql field"));
+        assert!(err.to_string().contains("not valid HuntProxy syntax"));
     }
 
     #[test]

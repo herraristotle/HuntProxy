@@ -327,6 +327,10 @@ impl NodeHandler for BuiltInHandler {
                     reply: self.reply.clone(),
                     db: self.db.clone(),
                     project_id: ctx.project_id,
+                    exchange_id: ctx
+                        .trigger
+                        .exchange_id()
+                        .or_else(|| input.get("exchange_id").and_then(Value::as_i64)),
                 };
                 let output = run_flow_js(&code, &input, timeout, ctx.cancel.clone(), host).await?;
                 Ok(NodeOutcome::port("ok").with("output", output))

@@ -183,7 +183,7 @@
           {
             "alias": "query",
             "value": {
-              "data": "(req.query.cont:\"&code=\" OR req.query.like:\"code=%\") AND req.query.ncont:\"state=\"",
+              "data": "(query:~\"&code=\" OR query:\"code=\"*) AND (NOT query:~\"state=\")",
               "kind": "string"
             }
           }
@@ -285,7 +285,7 @@
           {
             "alias": "query",
             "value": {
-              "data": "req.query.cont:\"response_type=token\" OR req.query.cont:\"response_type=code+token\"",
+              "data": "query:~\"response_type=token\" OR query:~\"response_type=code+token\"",
               "kind": "string"
             }
           }
@@ -387,7 +387,7 @@
           {
             "alias": "query",
             "value": {
-              "data": "req.raw.cont:\"response_type=password\"",
+              "data": "request:~\"response_type=password\"",
               "kind": "string"
             }
           }
