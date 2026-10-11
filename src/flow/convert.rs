@@ -855,6 +855,19 @@ mod tests {
             assert!(!def.graph.nodes.is_empty(), "{name}");
             crate::flow::validate_flow(&def)
                 .unwrap_or_else(|e| panic!("{name} imported but failed validation: {e}"));
+            if name == "base64-decode" {
+                assert_eq!(
+                    def.graph.edges.len(),
+                    1,
+                    "{name} edges: {:?}",
+                    def.graph.edges
+                );
+                let edge = &def.graph.edges[0];
+                assert_eq!(edge.source.node, "start", "{name}");
+                assert_eq!(edge.source.port, "exec", "{name}");
+                assert_eq!(edge.target.node, "decode", "{name}");
+                assert_eq!(edge.target.port, "exec", "{name}");
+            }
         }
     }
 

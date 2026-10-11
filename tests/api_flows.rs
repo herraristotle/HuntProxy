@@ -482,7 +482,10 @@ async fn import_caido_convert_flow_and_run() {
         .to_string();
     let job = wait_for_job(&state, project_id.get(), &job_id).await;
     assert_eq!(job["state"], "succeeded", "{job}");
-    assert_eq!(job["outcome"]["outputs"]["decode.output"], "hello");
+    assert_eq!(
+        job["outcome"]["outputs"]["decode.output"], "hello",
+        "job: {job}"
+    );
 }
 
 #[tokio::test]
