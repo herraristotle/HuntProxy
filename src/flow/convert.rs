@@ -568,11 +568,23 @@ pub fn import_caido_definition(raw: &str) -> DomainResult<FlowDefinition> {
             ))
         })?;
 
-        // Caido's default exec output port is `exec`; HuntProxy's is `ok`.
+        // Caido uses one `exec` alias everywhere. HuntProxy trigger nodes
+        // continue on `exec` (the interpreter seeds the start node with
+        // that port); action and condition nodes continue on `ok`.
         // `httpql-matches` occasionally uses a `true` branch port in store
         // samples (always alongside http-code-js, which we refuse); fail
         // loudly rather than silently rewiring it.
-        let mapped_source_port = match (source_port, alias_to_def_id.get(source_alias).map(String::as_str)) {
+        let source_def = alias_to_def_id.get(source_alias).map(String::as_str);
+        let mapped_source_port = match (source_port, source_def) {
+            (
+                "exec",
+                Some(
+                    "caido/convert-start"
+                    | "caido/active-start"
+                    | "caido/on-intercept-request"
+                    | "caido/on-intercept-response",
+                ),
+            ) => "exec",
             ("exec", _) => "ok",
             (port, Some("caido/httpql-matches")) => {
                 return Err(invalid(format!(
@@ -708,7 +720,8 @@ mod tests {
                 value: Value::String("request:~\"Sec-Fetch-Mode: navigate\"".into())
             }
         );
-        // Edge into dropped passive-end is gone; source `exec` port maps to `ok`.
+        // Edge into dropped passive-end is gone; the trigger keeps its `exec`
+        // source port while action nodes emit `ok`.
         assert_eq!(def.graph.edges.len(), 3);
         let branch = def
             .graph

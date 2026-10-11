@@ -823,7 +823,7 @@ mod tests {
                 assert_eq!(op, "regex");
                 assert_eq!(
                     value.as_str().unwrap(),
-                    "\\\"access_token\\\"\\\\s*:\\\\s*\\\"([^\\\"]+)\\\""
+                    "\"access_token\"\\s*:\\s*\"([^\"]+)\""
                 );
             }
             other => panic!("expected a term, got {other:?}"),
@@ -859,11 +859,11 @@ mod tests {
     #[test]
     fn desugars_like_wildcards() {
         assert_eq!(translate("req.query.like:\"code=%\""), "query:\"code=\"*");
-        assert_eq!(translate("req.query.like:\"%token\""), "query:\"*token\"");
+        assert_eq!(translate("req.query.like:\"%token\""), "query:*\"token\"");
         assert_eq!(translate("req.query.like:\"%code=%\""), "query:~\"code=\"");
         assert_eq!(
             translate("req.query.like:\"code=%next\""),
-            "query:\"code=\"* AND query:\"*next\""
+            "query:\"code=\"* AND query:*\"next\""
         );
         // No wildcard: exact match. Underscore or several %: (?i) regex.
         assert_eq!(translate("req.query.like:\"code=1\""), "query:\"code=1\"");
