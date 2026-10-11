@@ -308,6 +308,46 @@ const NODES: &[NodeInfo] = &[
         exec_in: EXEC,
         exec_out: OK_ERROR,
     },
+    NodeInfo {
+        type_name: "flow/httpql-match",
+        display: "HTTPQL match",
+        category: "logic",
+        doc: "Evaluates a bounded HTTPQL query against an exchange and reports whether it matched.",
+        trigger: None,
+        inputs: &[
+            PortSpec::input(
+                "query",
+                ValueKind::String,
+                true,
+                "HTTPQL query such as req.query.cont:\"code=\". Supported fields: req.raw, req.query, req.path, req.host, req.method, resp.raw, resp.mime, resp.status.",
+            ),
+            PortSpec::input(
+                "exchange_id",
+                ValueKind::Number,
+                false,
+                "Exchange to evaluate. Defaults to the triggering exchange.",
+            ),
+        ],
+        outputs: &[PortSpec::output("matches", ValueKind::Boolean, "Whether the query matched.")],
+        exec_in: EXEC,
+        exec_out: OK_ERROR,
+    },
+    NodeInfo {
+        type_name: "flow/in-scope",
+        display: "In scope",
+        category: "logic",
+        doc: "Checks whether an exchange's URL falls inside the project capture scope, then continues on the true or false port.",
+        trigger: None,
+        inputs: &[PortSpec::input(
+            "exchange_id",
+            ValueKind::Number,
+            false,
+            "Exchange to check. Defaults to the triggering exchange.",
+        )],
+        outputs: &[PortSpec::output("result", ValueKind::Boolean, "Whether the URL is in scope.")],
+        exec_in: EXEC,
+        exec_out: &["true", "false"],
+    },
 ];
 
 pub fn node_catalog() -> &'static [NodeInfo] {

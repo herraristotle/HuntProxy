@@ -215,6 +215,10 @@ pub fn router(state: Arc<AppState>) -> Router {
                 .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
         )
         .route(
+            "/api/v1/projects/{id}/flows/import",
+            post(import_flow).layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
+        )
+        .route(
             "/api/v1/projects/{id}/flows/{fid}",
             get(get_flow)
                 .put(update_flow_handler)
@@ -1410,6 +1414,13 @@ struct CreateFlowBody {
 }
 
 #[derive(Deserialize)]
+struct ImportFlowBody {
+    /// A raw Caido workflow definition (the JSON file exported from Caido's
+    /// workflow UI). Converted to the native format before storage.
+    definition: serde_json::Value,
+}
+
+#[derive(Deserialize)]
 struct UpdateFlowBody {
     definition: FlowDefinition,
     #[serde(default)]
@@ -1446,6 +1457,38 @@ async fn create_flow(
                 payload: serde_json::json!({
                     "flow_id": flow.id.get(),
                     "action": "created",
+                }),
+            });
+            (StatusCode::CREATED, Json(flow)).into_response()
+        }
+        Err(error) => error_response(error),
+    }
+}
+
+async fn import_flow(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<ImportFlowBody>,
+) -> Response {
+    let raw = match &body.definition {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let definition = match crate::flow::import_caido_definition(&raw) {
+        Ok(definition) => definition,
+        Err(error) => return error_response(error),
+    };
+    if let Err(error) = crate::flow::validate_flow(&definition) {
+        return error_response(error);
+    }
+    match state.db.create_flow(ProjectId(id), definition).await {
+        Ok(flow) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "flow".into(),
+                payload: serde_json::json!({
+                    "flow_id": flow.id.get(),
+                    "action": "imported",
                 }),
             });
             (StatusCode::CREATED, Json(flow)).into_response()

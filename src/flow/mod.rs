@@ -1,5 +1,7 @@
 //! Flow engine: node registry, validation, execution, and job orchestration.
 
+mod convert;
+mod httpql;
 mod interp;
 mod js;
 mod nodes;
@@ -7,6 +9,9 @@ mod registry;
 mod runner;
 mod shell;
 mod validate;
+
+pub use convert::import_caido_definition;
+pub use httpql::{parse_httpql, HttpqlContext, HttpqlNeeds, HttpqlQuery};
 
 pub use interp::{
     trigger_kind_for, FlowRunOptions, FlowRunOutcome, FlowStepLog, FlowTrigger, NodeExecCtx,
