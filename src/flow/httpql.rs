@@ -41,19 +41,19 @@ enum Field {
 }
 
 impl Field {
-    fn parse(text: &str) -> DomainResult<Self> {
-        Ok(match text {
-            "req.raw" => Self::ReqRaw,
-            "req.query" => Self::ReqQuery,
-            "req.path" => Self::ReqPath,
-            "req.host" => Self::ReqHost,
-            "req.method" => Self::ReqMethod,
-            "resp.raw" => Self::RespRaw,
-            "resp.mime" => Self::RespMime,
-            "resp.status" => Self::RespStatus,
-            other => {
+    fn parse(namespace: &str, name: &str) -> DomainResult<Self> {
+        Ok(match (namespace, name) {
+            ("req", "raw") => Self::ReqRaw,
+            ("req", "query") => Self::ReqQuery,
+            ("req", "path") => Self::ReqPath,
+            ("req", "host") => Self::ReqHost,
+            ("req", "method") => Self::ReqMethod,
+            ("resp", "raw") => Self::RespRaw,
+            ("resp", "mime") => Self::RespMime,
+            ("resp", "status") => Self::RespStatus,
+            (ns, other) => {
                 return Err(invalid(format!(
-                    "unsupported httpql field `{other}` (supported: req.raw, req.query, req.path, req.host, req.method, resp.raw, resp.mime, resp.status)"
+                    "unsupported httpql field `{ns}.{other}` (supported: req.raw, req.query, req.path, req.host, req.method, resp.raw, resp.mime, resp.status)"
                 )))
             }
         })
@@ -208,7 +208,12 @@ fn lex(query: &str) -> DomainResult<Vec<Lexeme>> {
                         continue;
                     }
                     match bytes[j] {
-                        b'\\' => escaped = true,
+                        // Advance past the backslash itself; the `escaped`
+                        // branch above then skips the character it protects.
+                        b'\\' => {
+                            escaped = true;
+                            j += 1;
+                        }
                         b'"' => break,
                         _ => j += 1,
                     }
@@ -237,7 +242,12 @@ fn lex(query: &str) -> DomainResult<Vec<Lexeme>> {
                         continue;
                     }
                     match bytes[j] {
-                        b'\\' => escaped = true,
+                        // Advance past the backslash itself; the `escaped`
+                        // branch above then skips the character it protects.
+                        b'\\' => {
+                            escaped = true;
+                            j += 1;
+                        }
                         b'/' => break,
                         _ => j += 1,
                     }
@@ -388,12 +398,15 @@ impl Parser {
     }
 
     fn parse_cmp(&mut self) -> DomainResult<Expr> {
-        let field_tok = self.expect(Tok::Ident)?;
-        let field = Field::parse(&field_tok)?;
+        let namespace = self.expect(Tok::Ident)?;
+        self.expect(Tok::Dot)?;
+        let field_name = self.expect(Tok::Ident)?;
+        let field = Field::parse(&namespace, &field_name)?;
         self.expect(Tok::Dot)?;
         let op_tok = self.expect(Tok::Ident)?;
         let op = Op::parse(&op_tok)?;
         self.expect(Tok::Colon)?;
+        let field_full = format!("{namespace}.{field_name}");
         let literal = match self.next() {
             Some((Tok::Str, text)) => Literal::Text(text),
             Some((Tok::Regex, pattern)) => {
@@ -417,7 +430,7 @@ impl Parser {
             }
             Some((tok, text)) => {
                 return Err(invalid(format!(
-                    "expected string, regex, or number after `{field_tok}.{op_tok}:`, found {tok:?} `{text}`"
+                    "expected string, regex, or number after `{namespace}.{field_name}.{op_tok}:`, found {tok:?} `{text}`"
                 )))
             }
             None => {
@@ -433,19 +446,19 @@ impl Parser {
             (true, Literal::Number(_)) => {
                 if !matches!(op, Op::Eq | Op::Neq | Op::Gt | Op::Gte | Op::Lt | Op::Lte) {
                     return Err(invalid(format!(
-                        "operator `{op_tok}` is not supported against numeric field `{field_tok}`"
+                        "operator `{op_tok}` is not supported against numeric field `{field_full}`"
                     )));
                 }
             }
             (true, _) => {
                 return Err(invalid(format!(
-                    "field `{field_tok}` is numeric but compared against a text or regex literal"
+                    "field `{field_full}` is numeric but compared against a text or regex literal"
                 )))
             }
             (false, Literal::Text(_) | Literal::Pattern(_)) => {}
             (false, Literal::Number(_)) => {
                 return Err(invalid(format!(
-                    "field `{field_tok}` is text but compared against a number"
+                    "field `{field_full}` is text but compared against a number"
                 )))
             }
         }
