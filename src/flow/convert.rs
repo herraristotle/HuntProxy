@@ -855,7 +855,7 @@ mod tests {
             assert!(!def.graph.nodes.is_empty(), "{name}");
             crate::flow::validate_flow(&def)
                 .unwrap_or_else(|e| panic!("{name} imported but failed validation: {e}"));
-            if name == "base64-decode" {
+            if *name == "base64-decode" {
                 assert_eq!(
                     def.graph.edges.len(),
                     1,
