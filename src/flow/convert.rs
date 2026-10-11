@@ -865,7 +865,7 @@ mod tests {
                 let edge = &def.graph.edges[0];
                 assert_eq!(edge.source.node, "start", "{name}");
                 assert_eq!(edge.source.port, "exec", "{name}");
-                assert_eq!(edge.target.node, "decode", "{name}");
+                assert_eq!(edge.target.node, "base64_decode", "{name}");
                 assert_eq!(edge.target.port, "exec", "{name}");
             }
         }

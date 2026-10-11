@@ -483,7 +483,7 @@ async fn import_caido_convert_flow_and_run() {
     let job = wait_for_job(&state, project_id.get(), &job_id).await;
     assert_eq!(job["state"], "succeeded", "{job}");
     assert_eq!(
-        job["outcome"]["outputs"]["decode.output"], "hello",
+        job["outcome"]["outputs"]["base64_decode.output"], "hello",
         "job: {job}"
     );
 }
