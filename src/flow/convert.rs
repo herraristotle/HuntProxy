@@ -384,7 +384,7 @@ pub fn import_caido_definition(raw: &str) -> DomainResult<FlowDefinition> {
                             "node `{alias}` is missing required input `condition`"
                         ))
                     })?;
-                let condition_property = convert_value(&condition.1, &alias_to_def_id, &alias)?;
+                let condition_property = convert_value(&condition.1, &alias_to_def_id, alias)?;
                 inputs.insert("left".into(), condition_property);
                 inputs.insert(
                     "right".into(),
