@@ -309,17 +309,17 @@ const NODES: &[NodeInfo] = &[
         exec_out: OK_ERROR,
     },
     NodeInfo {
-        type_name: "flow/httpql-match",
-        display: "HTTPQL match",
+        type_name: "flow/query-match",
+        display: "Query match",
         category: "logic",
-        doc: "Evaluates a bounded HTTPQL query against an exchange and reports whether it matched.",
+        doc: "Evaluates a HuntProxy query (the same language as History search) against an exchange and reports whether it matched.",
         trigger: None,
         inputs: &[
             PortSpec::input(
                 "query",
                 ValueKind::String,
                 true,
-                "HTTPQL query such as req.query.cont:\"code=\". Supported fields: req.raw, req.query, req.path, req.host, req.method, resp.raw, resp.mime, resp.status.",
+                "HuntProxy query such as query:~\"code=\" or response:~token, using the same syntax as the History search bar.",
             ),
             PortSpec::input(
                 "exchange_id",

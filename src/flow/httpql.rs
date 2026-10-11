@@ -1,21 +1,31 @@
-//! Bounded HTTPQL subset evaluator for `flow/httpql-match` nodes.
+//! Import-time translator from the bounded HTTPQL subset observed in Caido
+//! workflow store exports into HuntProxy's native query language.
 //!
-//! This implements only the surface actually observed in real Caido workflow
-//! exports (the `workflows/` store): the fields below, the `cont`, `ncont`,
-//! `eq`, `neq`, `like`, `regex`, `gt`, `gte`, `lt`, `lte` operators, `and` /
-//! `or` / `not` (case-insensitive keywords), and parentheses. Anything else
-//! is rejected with a precise error rather than guessed at.
+//! HuntProxy has exactly one query language — the same one the History
+//! search bar uses — and flows evaluate it through the same compiler.
+//! HTTPQL exists here only as a *source* format: `translate_httpql_to_dsl`
+//! parses an HTTPQL query (the fields and operators actually seen in the
+//! `workflows/` store), builds our `FilterNode` AST directly, prints it
+//! back to query text, and refuses the import when the round-trip would
+//! change meaning (for example a regex containing `>=`, which our parser
+//! would read as a comparison operator).
+//!
+//! Supported HTTPQL surface: `req.raw`, `req.query`, `req.path`,
+//! `req.host`, `req.method`, `resp.raw`, `resp.mime`, `resp.status`; the
+//! `cont`, `ncont`, `eq`, `neq`, `like`, `regex`, `gt`, `gte`, `lt`, `lte`
+//! operators; and `and` / `or` / `not` (case-insensitive) with parentheses.
+//! Anything else is a precise import error, never a guess.
 
 use regex::Regex;
-use std::collections::BTreeSet;
 
 use crate::domain::{DomainError, DomainResult, ErrorCode};
+use crate::history::{filter_to_sql, parse_text_query, FilterNode};
 
 /// Cap on the raw query text we will even try to parse.
 pub const MAX_HTTPQL_QUERY: usize = 2048;
 /// Cap on any single regular expression a `regex:` operator may use.
 pub const MAX_HTTPQL_REGEX: usize = 512;
-/// Cap on nesting depth of parenthesised groups.
+/// Cap on nesting depth of parenthesised groups in the source query.
 pub const MAX_HTTPQL_DEPTH: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +57,20 @@ impl Field {
                 )))
             }
         })
+    }
+
+    /// Corresponding HuntProxy query-language field name.
+    fn dsl_name(self) -> &'static str {
+        match self {
+            Self::ReqRaw => "request",
+            Self::ReqQuery => "query",
+            Self::ReqPath => "path",
+            Self::ReqHost => "host",
+            Self::ReqMethod => "method",
+            Self::RespRaw => "response",
+            Self::RespMime => "mime",
+            Self::RespStatus => "status",
+        }
     }
 
     fn is_numeric(self) -> bool {
@@ -90,12 +114,13 @@ impl Op {
     }
 }
 
-/// Literal operand of a comparison: a plain string, a compiled regex, or a
-/// number (used only against numeric fields such as `resp.status`).
+/// Literal operand of a comparison: a plain string, a regex source (validated
+/// to compile, stored as text), or a number (used only against numeric fields
+/// such as `resp.status`).
 #[derive(Debug, Clone)]
 enum Literal {
     Text(String),
-    Pattern(Regex),
+    Pattern(String),
     Number(f64),
 }
 
@@ -377,10 +402,12 @@ impl Parser {
                         "httpql regex longer than {MAX_HTTPQL_REGEX} bytes"
                     )));
                 }
-                let compiled = Regex::new(&pattern).map_err(|e| {
-                    invalid(format!("invalid httpql regex /{pattern}/: {e}"))
-                })?;
-                Literal::Pattern(compiled)
+                // Validate at import time with the same regex engine the
+                // runtime uses, so a pattern Caido accepted but Rust rejects
+                // fails the import, not the flow.
+                Regex::new(&pattern)
+                    .map_err(|e| invalid(format!("invalid httpql regex /{pattern}/: {e}")))?;
+                Literal::Pattern(pattern)
             }
             Some((Tok::Num, text)) => {
                 let n: f64 = text
@@ -388,39 +415,51 @@ impl Parser {
                     .map_err(|_| invalid(format!("invalid httpql number `{text}`")))?;
                 Literal::Number(n)
             }
-            Some((tok, text)) => Err(invalid(format!(
-                "expected string, regex, or number after `{field_tok}.{op_tok}:`, found {tok:?} `{text}`"
-            ))),
+            Some((tok, text)) => {
+                return Err(invalid(format!(
+                    "expected string, regex, or number after `{field_tok}.{op_tok}:`, found {tok:?} `{text}`"
+                )))
+            }
             None => {
                 return Err(invalid(
                     "expected a literal after `:` in httpql query".into(),
                 ))
             }
         };
-        // Numeric fields cannot be compared against text literals and vice
-        // versa; reject the mismatch up front so evaluation stays total.
+        // Numeric fields compare only against numbers with the ordering
+        // operators; text fields only against strings and regexes. Reject
+        // mismatches up front so translation stays total.
         match (field.is_numeric(), &literal) {
-            (true, Literal::Text(_) | Literal::Pattern(_))
-                if !matches!(op, Op::Like | Op::Regex) =>
-            {
+            (true, Literal::Number(_)) => {
+                if !matches!(op, Op::Eq | Op::Neq | Op::Gt | Op::Gte | Op::Lt | Op::Lte) {
+                    return Err(invalid(format!(
+                        "operator `{op_tok}` is not supported against numeric field `{field_tok}`"
+                    )));
+                }
+            }
+            (true, _) => {
                 return Err(invalid(format!(
-                    "field `{field_tok}` is numeric but compared against a text literal"
+                    "field `{field_tok}` is numeric but compared against a text or regex literal"
                 )))
             }
-            (true, _) => {}
+            (false, Literal::Text(_) | Literal::Pattern(_)) => {}
             (false, Literal::Number(_)) => {
                 return Err(invalid(format!(
                     "field `{field_tok}` is text but compared against a number"
                 )))
             }
-            (false, _) => {}
         }
         Ok(Expr::Cmp { field, op, literal })
     }
 }
 
-/// Parse an HTTPQL query into an evaluable tree.
-pub fn parse_httpql(query: &str) -> DomainResult<HttpqlQuery> {
+/// Translate an HTTPQL query into HuntProxy query-language text.
+///
+/// The returned text is proven safe to store: it parses back through
+/// [`parse_text_query`] into the same filter this translator built, and it
+/// compiles through [`filter_to_sql`] (the exact runtime path the
+/// `flow/query-match` node uses).
+pub fn translate_httpql_to_dsl(query: &str) -> DomainResult<String> {
     if query.len() > MAX_HTTPQL_QUERY {
         return Err(invalid(format!(
             "httpql query longer than {MAX_HTTPQL_QUERY} bytes"
@@ -441,96 +480,149 @@ pub fn parse_httpql(query: &str) -> DomainResult<HttpqlQuery> {
             "trailing {tok:?} `{text}` in httpql query"
         )));
     }
-    Ok(HttpqlQuery { expr })
+    let filter = httpql_to_filter(&expr)?;
+    let text = filter_to_dsl(&filter)?;
+    let reparsed = parse_text_query(&text)?;
+    let original = serde_json::to_value(&filter)
+        .map_err(|e| invalid(format!("internal: cannot compare translated filter: {e}")))?;
+    let round_trip = serde_json::to_value(&reparsed)
+        .map_err(|e| invalid(format!("internal: cannot compare reparsed filter: {e}")))?;
+    if original != round_trip {
+        return Err(invalid(format!(
+            "translated query `{text}` does not round-trip through the HuntProxy query parser unchanged; \
+             this happens when a regex contains comparison operators such as >= or a value starts with >, <, ~, or * - \
+             simplify the pattern to avoid those sequences"
+        )));
+    }
+    // Prove the runtime compiler accepts the filter (field allowlist, op
+    // allowlist, depth and term caps, body-search plumbing).
+    filter_to_sql(&reparsed)?;
+    Ok(text)
 }
 
-/// A parsed, ready-to-evaluate HTTPQL query.
-#[derive(Debug)]
-pub struct HttpqlQuery {
-    expr: Expr,
+fn httpql_to_filter(expr: &Expr) -> DomainResult<FilterNode> {
+    Ok(match expr {
+        Expr::And(a, b) => FilterNode::And {
+            and: vec![httpql_to_filter(a)?, httpql_to_filter(b)?],
+        },
+        Expr::Or(a, b) => FilterNode::Or {
+            or: vec![httpql_to_filter(a)?, httpql_to_filter(b)?],
+        },
+        Expr::Not(inner) => FilterNode::Not {
+            not: Box::new(httpql_to_filter(inner)?),
+        },
+        Expr::Cmp { field, op, literal } => cmp_to_filter(*field, *op, literal)?,
+    })
 }
 
-/// Fields a parsed query touches. Callers use this to load only the context
-/// the query actually needs (raw request/response text is expensive).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HttpqlNeeds {
-    pub req_raw: bool,
-    pub resp_raw: bool,
+fn term_node(field: &str, op: &str, value: serde_json::Value) -> FilterNode {
+    FilterNode::Term {
+        field: field.to_string(),
+        op: op.to_string(),
+        value,
+        subfield: None,
+    }
 }
 
-impl HttpqlQuery {
-    pub fn needs(&self) -> HttpqlNeeds {
-        let mut needs = HttpqlNeeds {
-            req_raw: false,
-            resp_raw: false,
+/// Text-term values are built exactly like the query parser's `term()`:
+/// a value that parses as an integer becomes a JSON number, everything else
+/// stays a string. Keeping the two in lockstep is what lets the round-trip
+/// comparison prove the translation is faithful.
+fn text_value(raw: &str) -> serde_json::Value {
+    if let Ok(n) = raw.parse::<i64>() {
+        serde_json::json!(n)
+    } else {
+        serde_json::json!(raw)
+    }
+}
+
+fn cmp_to_filter(field: Field, op: Op, literal: &Literal) -> DomainResult<FilterNode> {
+    let name = field.dsl_name();
+    if field.is_numeric() {
+        let Literal::Number(n) = literal else {
+            return Err(invalid(format!(
+                "internal: numeric field `{name}` compared against a non-number"
+            )));
         };
-        walk(&self.expr, &mut needs);
-        fn walk(expr: &Expr, needs: &mut HttpqlNeeds) {
-            match expr {
-                Expr::And(a, b) | Expr::Or(a, b) => {
-                    walk(a, needs);
-                    walk(b, needs);
-                }
-                Expr::Not(inner) => walk(inner, needs),
-                Expr::Cmp { field, .. } => match field {
-                    Field::ReqRaw => needs.req_raw = true,
-                    Field::RespRaw => needs.resp_raw = true,
-                    _ => {}
-                },
+        if n.fract() != 0.0 || n.abs() >= 1e15 {
+            return Err(invalid(format!(
+                "httpql number `{n}` is not an integer; status comparisons must use whole numbers"
+            )));
+        }
+        let op_name = match op {
+            Op::Eq => "eq",
+            Op::Neq => "ne",
+            Op::Gt => "gt",
+            Op::Gte => "gte",
+            Op::Lt => "lt",
+            Op::Lte => "lte",
+            other => {
+                return Err(invalid(format!(
+                    "internal: operator {other:?} not handled for numeric field"
+                )))
             }
+        };
+        return Ok(term_node(name, op_name, serde_json::json!(*n as i64)));
+    }
+    match (op, literal) {
+        (Op::Cont, Literal::Text(value)) => Ok(term_node(name, "contains", text_value(value))),
+        (Op::Ncont, Literal::Text(value)) => Ok(FilterNode::Not {
+            not: Box::new(term_node(name, "contains", text_value(value))),
+        }),
+        (Op::Eq, Literal::Text(value)) => Ok(term_node(name, "eq", text_value(value))),
+        (Op::Neq, Literal::Text(value)) => Ok(term_node(name, "ne", text_value(value))),
+        (Op::Regex, Literal::Pattern(pattern)) => {
+            Ok(term_node(name, "regex", serde_json::json!(pattern)))
         }
-        needs
-    }
-
-    /// Evaluate the query against a context. Every field the query does not
-    /// touch is treated as empty (text) or absent (numeric).
-    pub fn evaluate(&self, ctx: &HttpqlContext<'_>) -> bool {
-        eval(&self.expr, ctx)
+        (Op::Like, Literal::Text(pattern)) => desugar_like(name, pattern),
+        other => Err(invalid(format!(
+            "unsupported httpql comparison against field `{name}` ({other:?})"
+        ))),
     }
 }
 
-/// Values the evaluator reads. Text fields default to empty string; the
-/// numeric `resp.status` field defaults to absent (`None`).
-pub struct HttpqlContext<'a> {
-    pub req_raw: &'a str,
-    pub req_query: &'a str,
-    pub req_path: &'a str,
-    pub req_host: &'a str,
-    pub req_method: &'a str,
-    pub resp_raw: &'a str,
-    pub resp_mime: &'a str,
-    pub resp_status: Option<u16>,
-}
-
-impl Default for HttpqlContext<'_> {
-    fn default() -> Self {
-        Self {
-            req_raw: "",
-            req_query: "",
-            req_path: "",
-            req_host: "",
-            req_method: "",
-            resp_raw: "",
-            resp_mime: "",
-            resp_status: None,
+/// Desugar a SQL `LIKE` pattern into native query-language operators.
+/// `%` and `_` are the only wildcards; patterns that do not reduce to a
+/// single contains / starts_with / ends_with become a `(?i)` regex, which
+/// matches SQLite's case-insensitive LIKE behaviour.
+fn desugar_like(field: &str, pattern: &str) -> DomainResult<FilterNode> {
+    let underscore = pattern.contains('_');
+    let pcts = pattern.matches('%').count();
+    if underscore || pcts > 2 {
+        return Ok(like_to_regex_term(field, pattern));
+    }
+    if pcts == 0 {
+        return Ok(term_node(field, "eq", text_value(pattern)));
+    }
+    if pcts == 1 {
+        let (prefix, suffix) = pattern
+            .split_once('%')
+            .expect("one percent is present when the count is 1");
+        if suffix.is_empty() {
+            return Ok(term_node(field, "starts_with", text_value(prefix)));
+        }
+        if prefix.is_empty() {
+            return Ok(term_node(field, "ends_with", text_value(suffix)));
+        }
+        return Ok(FilterNode::And {
+            and: vec![
+                term_node(field, "starts_with", text_value(prefix)),
+                term_node(field, "ends_with", text_value(suffix)),
+            ],
+        });
+    }
+    // Two percent signs and no underscore: only the `%x%` shape reduces to
+    // a single contains; anything else needs the regex fallback.
+    if pattern.starts_with('%') && pattern.ends_with('%') {
+        let inner = &pattern[1..pattern.len() - 1];
+        if !inner.contains('%') {
+            return Ok(term_node(field, "contains", text_value(inner)));
         }
     }
+    Ok(like_to_regex_term(field, pattern))
 }
 
-fn field_text<'a>(field: Field, ctx: &'a HttpqlContext<'_>) -> &'a str {
-    match field {
-        Field::ReqRaw => ctx.req_raw,
-        Field::ReqQuery => ctx.req_query,
-        Field::ReqPath => ctx.req_path,
-        Field::ReqHost => ctx.req_host,
-        Field::ReqMethod => ctx.req_method,
-        Field::RespRaw => ctx.resp_raw,
-        Field::RespMime => ctx.resp_mime,
-        Field::RespStatus => "",
-    }
-}
-
-fn like_to_regex(pattern: &str) -> Regex {
+fn like_to_regex_term(field: &str, pattern: &str) -> FilterNode {
     let mut out = String::with_capacity(pattern.len() * 2 + 4);
     out.push_str("(?i)");
     for ch in pattern.chars() {
@@ -545,87 +637,110 @@ fn like_to_regex(pattern: &str) -> Regex {
             }
         }
     }
-    // The pattern was built from a caller string; quoting the wildcards above
-    // means this only fails on pathological sizes, which we already cap.
-    Regex::new(&out).unwrap_or_else(|_| Regex::new("(?i)a^").expect("sentinel regex"))
+    term_node(field, "regex", serde_json::json!(out))
 }
 
-fn eval(expr: &Expr, ctx: &HttpqlContext<'_>) -> bool {
-    match expr {
-        Expr::And(a, b) => eval(a, ctx) && eval(b, ctx),
-        Expr::Or(a, b) => eval(a, ctx) || eval(b, ctx),
-        Expr::Not(inner) => !eval(inner, ctx),
-        Expr::Cmp { field, op, literal } => eval_cmp(*field, *op, literal, ctx),
-    }
-}
-
-fn eval_cmp(field: Field, op: Op, literal: &Literal, ctx: &HttpqlContext<'_>) -> bool {
-    if field.is_numeric() {
-        let Some(status) = ctx.resp_status else {
-            // A numeric comparison against an absent value is false for all
-            // ops except neq, which is vacuously true.
-            return matches!(op, Op::Neq);
-        };
-        let Some(target) = literal_number(literal) else {
-            return false;
-        };
-        let actual = f64::from(status);
-        return match op {
-            Op::Eq => actual == target,
-            Op::Neq => actual != target,
-            Op::Gt => actual > target,
-            Op::Gte => actual >= target,
-            Op::Lt => actual < target,
-            Op::Lte => actual <= target,
-            _ => false,
-        };
-    }
-    let text = field_text(field, ctx);
-    match (op, literal) {
-        (Op::Cont, Literal::Text(needle)) => text.contains(needle.as_str()),
-        (Op::Ncont, Literal::Text(needle)) => !text.contains(needle.as_str()),
-        (Op::Eq, Literal::Text(needle)) => text == needle.as_str(),
-        (Op::Neq, Literal::Text(needle)) => text != needle.as_str(),
-        (Op::Like, Literal::Text(pattern)) => like_to_regex(pattern).is_match(text),
-        (Op::Regex, Literal::Pattern(re)) => re.is_match(text),
-        // eq/neq against a regex or number on a text field: treat as never
-        // matching (the parser already rejects numeric literals here).
-        _ => false,
-    }
-}
-
-fn literal_number(literal: &Literal) -> Option<f64> {
-    match literal {
-        Literal::Number(n) => Some(*n),
-        _ => None,
-    }
-}
-
-/// Collect the distinct field names a query mentions (used by the converter
-/// to refuse queries that would need context we cannot supply).
-pub fn referenced_fields(query: &HttpqlQuery) -> BTreeSet<&'static str> {
-    let mut out = BTreeSet::new();
-    collect(&query.expr, &mut out);
-    fn collect<'a>(expr: &'a Expr, out: &mut BTreeSet<&'static str>) {
-        match expr {
-            Expr::And(a, b) | Expr::Or(a, b) => {
-                collect(a, out);
-                collect(b, out);
+/// Print a filter back into query-language text. Terms are emitted bare;
+/// compound children are parenthesised so precedence survives the trip.
+fn filter_to_dsl(node: &FilterNode) -> DomainResult<String> {
+    Ok(match node {
+        FilterNode::And { and } => {
+            let parts: DomainResult<Vec<_>> = and.iter().map(child_dsl).collect();
+            parts?.join(" AND ")
+        }
+        FilterNode::Or { or } => {
+            let parts: DomainResult<Vec<_>> = or.iter().map(child_dsl).collect();
+            parts?.join(" OR ")
+        }
+        FilterNode::Not { not } => format!("NOT {}", child_dsl(not)?),
+        FilterNode::Term {
+            field,
+            op,
+            value,
+            subfield,
+        } => {
+            if subfield.is_some() {
+                return Err(invalid(
+                    "internal: header terms are not produced by httpql translation".into(),
+                ));
             }
-            Expr::Not(inner) => collect(inner, out),
-            Expr::Cmp { field, .. } => {
-                let name: &'static str = match field {
-                    Field::ReqRaw => "req.raw",
-                    Field::ReqQuery => "req.query",
-                    Field::ReqPath => "req.path",
-                    Field::ReqHost => "req.host",
-                    Field::ReqMethod => "req.method",
-                    Field::RespRaw => "resp.raw",
-                    Field::RespMime => "resp.mime",
-                    Field::RespStatus => "resp.status",
-                };
-                out.insert(name);
+            term_dsl(field, op, value)?
+        }
+    })
+}
+
+fn child_dsl(node: &FilterNode) -> DomainResult<String> {
+    match node {
+        FilterNode::Term { .. } => filter_to_dsl(node),
+        other => Ok(format!("({})", filter_to_dsl(other)?)),
+    }
+}
+
+fn term_dsl(field: &str, op: &str, value: &serde_json::Value) -> DomainResult<String> {
+    match op {
+        "eq" => Ok(format!("{field}:{}", dsl_value(value)?)),
+        "ne" => Ok(format!("{field}!={}", dsl_value(value)?)),
+        "contains" => Ok(format!("{field}:~{}", dsl_quoted(value)?)),
+        "starts_with" => Ok(format!("{field}:{}*", dsl_quoted(value)?)),
+        "ends_with" => Ok(format!("{field}:*{}", dsl_quoted(value)?)),
+        "regex" => Ok(format!("{field}=~{}", dsl_quoted(value)?)),
+        "nregex" => Ok(format!("{field}!=~{}", dsl_quoted(value)?)),
+        "gt" => Ok(format!("{field}>{}", number_text(value)?)),
+        "gte" => Ok(format!("{field}>={}", number_text(value)?)),
+        "lt" => Ok(format!("{field}<{}", number_text(value)?)),
+        "lte" => Ok(format!("{field}<={}", number_text(value)?)),
+        other => Err(invalid(format!(
+            "internal: no query emission for operator `{other}`"
+        ))),
+    }
+}
+
+fn dsl_quoted(value: &serde_json::Value) -> DomainResult<String> {
+    let text = match value {
+        serde_json::Value::String(text) => text.clone(),
+        // Text-term values that parse as integers are stored as numbers
+        // (mirroring the query parser); quote them back as their digits.
+        serde_json::Value::Number(number) => number.to_string(),
+        _ => {
+            return Err(invalid(
+                "internal: expected a string or number value".into(),
+            ))
+        }
+    };
+    Ok(format!("\"{}\"", dsl_escape(&text)))
+}
+
+fn dsl_value(value: &serde_json::Value) -> DomainResult<String> {
+    match value {
+        serde_json::Value::String(_) => dsl_quoted(value),
+        _ => number_text(value),
+    }
+}
+
+fn number_text(value: &serde_json::Value) -> DomainResult<String> {
+    if let Some(n) = value.as_i64() {
+        return Ok(n.to_string());
+    }
+    if let Some(n) = value.as_f64() {
+        if n.fract() == 0.0 && n.abs() < 1e15 {
+            return Ok((n as i64).to_string());
+        }
+        return Ok(format!("{n}"));
+    }
+    Err(invalid("internal: expected a number".into()))
+}
+
+/// Escape a value for a double-quoted query-language string: the tokenizer
+/// treats `\` as an escape and `"` as the terminator.
+fn dsl_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' | '"' => {
+                out.push('\\');
+                out.push(ch);
             }
+            other => out.push(other),
         }
     }
     out
@@ -635,115 +750,178 @@ pub fn referenced_fields(query: &HttpqlQuery) -> BTreeSet<&'static str> {
 mod tests {
     use super::*;
 
-    fn ctx_with(query: &str) -> HttpqlContext<'static> {
-        HttpqlContext {
-            req_raw: "GET /a?x=1 HTTP/1.1\r\nSec-Fetch-Mode: navigate\r\n",
-            req_query: query,
-            req_path: "/a",
-            req_host: "example.com",
-            req_method: "GET",
-            resp_raw: "HTTP/1.1 200 OK\r\n\r\n{\"access_token\":\"abc\"}",
-            resp_mime: "application/json",
-            resp_status: Some(200),
+    fn translate(query: &str) -> String {
+        translate_httpql_to_dsl(query).unwrap()
+    }
+
+    #[test]
+    fn translates_cont_and_ncont() {
+        assert_eq!(translate("req.query.cont:\"code=\""), "query:~\"code=\"");
+        assert_eq!(translate("req.query.ncont:\"nope\""), "NOT query:~\"nope\"");
+    }
+
+    #[test]
+    fn translates_and_or_not_and_parens() {
+        assert_eq!(
+            translate(
+                "(req.query.cont:\"code=\" AND req.query.cont:\"state=\") OR req.query.cont:\"zzz\""
+            ),
+            "(query:~\"code=\" AND query:~\"state=\") OR query:~\"zzz\""
+        );
+        assert_eq!(
+            translate("NOT req.query.cont:\"zzz\""),
+            "NOT query:~\"zzz\""
+        );
+        assert_eq!(
+            translate("req.query.ncont:\"zzz\" and req.query.cont:\"code=\""),
+            "(NOT query:~\"zzz\") AND query:~\"code=\""
+        );
+    }
+
+    #[test]
+    fn translates_regex_with_quotes_colons_and_flags() {
+        // The emitted text must parse back into a regex term carrying the
+        // original pattern byte-for-byte; exact-string assertions would only
+        // re-test the escaper against itself.
+        let text = translate("req.query.regex:/(?i)(https?|ftp|file)(:\\/\\/|%3A%2F%2F)/");
+        match parse_text_query(&text).unwrap() {
+            FilterNode::Term {
+                field,
+                op,
+                value,
+                subfield,
+            } => {
+                assert_eq!(field, "query");
+                assert_eq!(op, "regex");
+                assert_eq!(
+                    value.as_str().unwrap(),
+                    "(?i)(https?|ftp|file)(:\\/\\/|%3A%2F%2F)"
+                );
+                assert!(subfield.is_none());
+            }
+            other => panic!("expected a term, got {other:?}"),
+        }
+        let text = translate("resp.raw.regex:/\"access_token\"\\s*:\\s*\"([^\"]+)\"/");
+        match parse_text_query(&text).unwrap() {
+            FilterNode::Term {
+                field, op, value, ..
+            } => {
+                assert_eq!(field, "response");
+                assert_eq!(op, "regex");
+                assert_eq!(
+                    value.as_str().unwrap(),
+                    "\\\"access_token\\\"\\\\s*:\\\\s*\\\"([^\\\"]+)\\\""
+                );
+            }
+            other => panic!("expected a term, got {other:?}"),
         }
     }
 
-    fn evaluate(query: &str, ctx: &HttpqlContext<'_>) -> bool {
-        parse_httpql(query).unwrap().evaluate(ctx)
+    #[test]
+    fn translates_raw_fields_to_full_text_search() {
+        assert_eq!(
+            translate("req.raw.cont:\"Sec-Fetch-Mode: navigate\""),
+            "request:~\"Sec-Fetch-Mode: navigate\""
+        );
+        assert_eq!(
+            translate("resp.mime.eq:\"application/json\""),
+            "mime:\"application/json\""
+        );
+        assert_eq!(
+            translate("req.host.eq:\"example.com\""),
+            "host:\"example.com\""
+        );
+        assert_eq!(translate("req.method.eq:\"POST\""), "method:\"POST\"");
+        assert_eq!(translate("req.path.cont:\"/api/\""), "path:~\"/api/\"");
     }
 
     #[test]
-    fn matches_cont_and_ncont() {
-        let ctx = ctx_with("code=1&state=2");
-        assert!(evaluate("req.query.cont:\"code=\"", &ctx));
-        assert!(evaluate("req.query.ncont:\"nope\"", &ctx));
-        assert!(!evaluate("req.query.cont:\"nope\"", &ctx));
+    fn translates_status_comparisons_numerically() {
+        assert_eq!(translate("resp.status.gte:200"), "status>=200");
+        assert_eq!(translate("resp.status.lt:300"), "status<300");
+        assert_eq!(translate("resp.status.eq:404"), "status:404");
+        assert_eq!(translate("resp.status.neq:204"), "status!=204");
     }
 
     #[test]
-    fn and_or_not_and_parens() {
-        let ctx = ctx_with("code=1&state=2");
-        assert!(evaluate(
-            "(req.query.cont:\"code=\" AND req.query.cont:\"state=\") OR req.query.cont:\"zzz\"",
-            &ctx
-        ));
-        assert!(!evaluate(
-            "req.query.cont:\"code=\" AND req.query.cont:\"zzz\"",
-            &ctx
-        ));
-        assert!(evaluate("NOT req.query.cont:\"zzz\"", &ctx));
-        assert!(evaluate(
-            "req.query.ncont:\"zzz\" and req.query.cont:\"code=\"",
-            &ctx
-        ));
+    fn desugars_like_wildcards() {
+        assert_eq!(translate("req.query.like:\"code=%\""), "query:\"code=\"*");
+        assert_eq!(translate("req.query.like:\"%token\""), "query:\"*token\"");
+        assert_eq!(translate("req.query.like:\"%code=%\""), "query:~\"code=\"");
+        assert_eq!(
+            translate("req.query.like:\"code=%next\""),
+            "query:\"code=\"* AND query:\"*next\""
+        );
+        // No wildcard: exact match. Underscore or several %: (?i) regex.
+        assert_eq!(translate("req.query.like:\"code=1\""), "query:\"code=1\"");
+        assert_eq!(
+            translate("req.query.like:\"code=a__\""),
+            "query=~\"(?i)code=a..\""
+        );
+        assert_eq!(
+            translate("req.query.like:\"%a%b%\""),
+            "query=~\"(?i).*a.*b.*\""
+        );
     }
 
     #[test]
-    fn regex_with_inline_flags() {
-        let ctx = ctx_with("url=https%3A%2F%2Fevil");
-        assert!(evaluate(
-            "req.query.regex:/(?i)(https?|ftp|file)(:\\/\\/|%3A%2F%2F)/",
-            &ctx
-        ));
-        assert!(!evaluate("req.query.regex:/nope/", &ctx));
-    }
-
-    #[test]
-    fn raw_fields_match_header_and_body_text() {
-        let ctx = HttpqlContext::default();
-        assert!(evaluate("req.raw.cont:\"Sec-Fetch-Mode: navigate\"", &ctx));
-        assert!(evaluate(
-            "resp.raw.regex:/\"access_token\"\\s*:\\s*\"([^\"]+)\"/",
-            &ctx
-        ));
-    }
-
-    #[test]
-    fn status_compares_numerically() {
-        let ctx = ctx_with("");
-        assert!(evaluate("resp.status.gte:200", &ctx));
-        assert!(evaluate("resp.status.lt:300", &ctx));
-        assert!(!evaluate("resp.status.eq:404", &ctx));
-    }
-
-    #[test]
-    fn like_wildcards() {
-        let ctx = ctx_with("code=abc&state=xyz");
-        assert!(evaluate("req.query.like:\"code=%\"", &ctx));
-        assert!(!evaluate("req.query.like:\"nope=%\"", &ctx));
-        assert!(evaluate("req.query.like:\"code=a__\"", &ctx));
+    fn escapes_values_for_the_dsl_tokenizer() {
+        // Quotes and backslashes inside values survive the round-trip.
+        assert_eq!(
+            translate("req.query.cont:\"a\\\"b\\\\c\""),
+            "query:~\"a\\\"b\\\\c\""
+        );
     }
 
     #[test]
     fn rejects_unsupported_fields_and_ops() {
-        assert!(parse_httpql("req.headers.cont:\"x\"").is_err());
-        assert!(parse_httpql("req.query.explode:\"x\"").is_err());
-        assert!(parse_httpql("req.query").is_err());
-        assert!(parse_httpql("").is_err());
-        assert!(parse_httpql("req.query.cont:\"x\" trailing").is_err());
+        assert!(translate_httpql_to_dsl("req.headers.cont:\"x\"").is_err());
+        assert!(translate_httpql_to_dsl("req.query.explode:\"x\"").is_err());
+        assert!(translate_httpql_to_dsl("req.query").is_err());
+        assert!(translate_httpql_to_dsl("").is_err());
+        assert!(translate_httpql_to_dsl("req.query.cont:\"x\" trailing").is_err());
+        // like/regex against the numeric status field.
+        assert!(translate_httpql_to_dsl("resp.status.like:\"2%\"").is_err());
+        assert!(translate_httpql_to_dsl("resp.status.regex:/2../").is_err());
+        // Number against a text field.
+        assert!(translate_httpql_to_dsl("req.query.eq:5").is_err());
     }
 
     #[test]
     fn rejects_unbalanced_and_oversized() {
-        assert!(parse_httpql("(req.query.cont:\"x\"").is_err());
+        assert!(translate_httpql_to_dsl("(req.query.cont:\"x\"").is_err());
         let long = "a".repeat(MAX_HTTPQL_QUERY + 1);
-        assert!(parse_httpql(&format!("req.query.cont:\"{long}\"")).is_err());
+        assert!(translate_httpql_to_dsl(&format!("req.query.cont:\"{long}\"")).is_err());
     }
 
     #[test]
-    fn needs_reports_raw_sides() {
-        let q = parse_httpql("req.raw.cont:\"a\" OR resp.raw.cont:\"b\"").unwrap();
-        let needs = q.needs();
-        assert!(needs.req_raw && needs.resp_raw);
-        let q2 = parse_httpql("req.query.cont:\"a\"").unwrap();
-        assert!(!q2.needs().req_raw && !q2.needs().resp_raw);
+    fn refuses_regex_that_would_not_round_trip() {
+        // `>=` inside the pattern is read as the gte operator by our
+        // parser; the translator detects the mismatch and refuses.
+        let err = translate_httpql_to_dsl("req.raw.regex:/a>=b/").unwrap_err();
+        assert!(err.to_string().contains("round-trip"), "{err}");
+        // Values starting with ~ or * would flip eq into contains / ends_with.
+        let err = translate_httpql_to_dsl("req.query.eq:\"~x\"").unwrap_err();
+        assert!(err.to_string().contains("round-trip"), "{err}");
     }
 
     #[test]
-    fn referenced_fields_lists_mentions() {
-        let q = parse_httpql("req.query.cont:\"a\" OR resp.status.eq:500").unwrap();
-        let fields = referenced_fields(&q);
-        assert!(fields.contains("req.query"));
-        assert!(fields.contains("resp.status"));
+    fn round_trips_real_store_queries() {
+        // Queries observed across the 21 httpql-matches nodes in the store.
+        let samples = [
+            "req.raw.cont:\"Sec-Fetch-Mode: navigate\"",
+            "req.query.cont:\"state=\" AND req.query.cont:\"code=\" AND NOT req.query.cont:\"code_challenge\"",
+            "resp.raw.regex:/\"access_token\"\\s*:/",
+            "req.host.eq:\"accounts.google.com\" AND req.path.cont:\"/o/oauth2\"",
+            "resp.status.gte:300 AND resp.status.lt:400",
+            "req.method.eq:\"POST\" AND req.query.cont:\"redirect_uri=\"",
+            "resp.mime.eq:\"application/json\" AND resp.raw.cont:\"id_token\"",
+            "req.query.like:\"code=%\" AND req.query.ncont:\"code_challenge\"",
+            "req.path.eq:\"/.well-known/openid-configuration\"",
+            "req.raw.cont:\"Cookie:\" AND req.raw.cont:\"session=\" AND req.path.cont:\"/admin\"",
+        ];
+        for sample in samples {
+            translate_httpql_to_dsl(sample).unwrap_or_else(|e| panic!("{sample}: {e}"));
+        }
     }
 }

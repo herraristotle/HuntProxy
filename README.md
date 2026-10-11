@@ -230,7 +230,7 @@ HuntProxy gives agents a complete hunting loop: build context → investigate �
 | **Portable projects** | Create sanitized project exports by default, opt into complete sensitive exports when needed, transfer HAR history, and back up the database. |
 | **Credential handling** | Keep credentials locally usable for authenticated work without exposing them through routine inspection tools. |
 | **Bounded plugins** | Add focused testing workflows while HuntProxy retains control of network access, credentials, limits, cancellation, History, and evidence. |
-| **Flows** | Build passive or manual graph workflows that color exchanges, file findings, send HTTP requests, filter with a bounded HTTPQL subset, and run bounded JavaScript or shell steps; edit them on a canvas in the UI or drive them through REST and MCP. Import Caido workflow definitions one-way (edition 2 → native); nodes without an honest equivalent (such as `http-code-js`) are refused by name. |
+| **Flows** | Build passive or manual graph workflows that color exchanges, file findings, send HTTP requests, filter with the same query language as History search, and run bounded JavaScript or shell steps; edit them on a canvas in the UI or drive them through REST and MCP. Import Caido workflow definitions one-way (edition 2 → native), with HTTPQL queries translated at import into HuntProxy's query language; nodes without an honest equivalent (such as `http-code-js`) are refused by name. |
 
 > [!TIP]
 > **The cool part?** You do not need to learn or explore every feature before you start. Just ask your agent to use HuntProxy MCP for the hunt. It can discover the available tools, choose what it needs, and keep the workflow moving.

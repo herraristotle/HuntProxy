@@ -15,7 +15,7 @@ use crate::domain::{
     FlowKind, FlowNode, FlowPort, FlowProperty, FLOW_EDITION,
 };
 
-use super::httpql::parse_httpql;
+use super::httpql::translate_httpql_to_dsl;
 
 fn invalid(message: String) -> DomainError {
     DomainError::new(ErrorCode::InvalidArgument, message)
@@ -111,7 +111,7 @@ fn map_definition(def_id: &str, alias: &str) -> DomainResult<Option<&'static str
         "caido/color-set" => Some("flow/set-color"),
         "caido/finding-create" => Some("flow/report-finding"),
         "caido/code-js" => Some("flow/js"),
-        "caido/httpql-matches" => Some("flow/httpql-match"),
+        "caido/httpql-matches" => Some("flow/query-match"),
         "caido/in-scope" => Some("flow/in-scope"),
         "caido/base64-encode" | "caido/base64-decode" | "caido/url-encode"
         | "caido/url-decode" => Some("flow/js"),
@@ -130,17 +130,17 @@ fn map_definition(def_id: &str, alias: &str) -> DomainResult<Option<&'static str
 
 /// Output port names that differ between Caido and HuntProxy for a given
 /// Caido `definition_id`.
-fn map_output_name(caido_def_id: &str, output: &str, alias: &str) -> DomainResult<&'static str> {
+fn map_output_name(caido_def_id: &str, output: &str, alias: &str) -> DomainResult<String> {
     Ok(match (caido_def_id, output) {
-        ("caido/code-js", "data") => "output",
+        ("caido/code-js", "data") => "output".to_string(),
         (
             "caido/base64-encode"
             | "caido/base64-decode"
             | "caido/url-encode"
             | "caido/url-decode",
             "data",
-        ) => "output",
-        ("caido/convert-start", "data") => "input",
+        ) => "output".to_string(),
+        ("caido/convert-start", "data") => "input".to_string(),
         ("caido/active-start", "request" | "response") => {
             return Err(invalid(format!(
                 "reference to `{alias}.{output}` has no HuntProxy equivalent; active-start only provides `input`"
@@ -151,7 +151,7 @@ fn map_output_name(caido_def_id: &str, output: &str, alias: &str) -> DomainResul
                 "reference to `{alias}.{output}` has no HuntProxy equivalent; use the exchange summary outputs (status, method, url) instead"
             )))
         }
-        _ => output,
+        _ => output.to_string(),
     })
 }
 
@@ -469,17 +469,24 @@ pub fn import_caido_definition(raw: &str) -> DomainResult<FlowDefinition> {
                         let query = value.get("data").and_then(Value::as_str).ok_or_else(|| {
                             invalid(format!("node `{alias}` input `query` must be a string"))
                         })?;
-                        // Parse at import time so an unparseable query fails
-                        // the import, not the runtime.
-                        parse_httpql(query)?;
+                        // Translate at import time: the stored flow always
+                        // contains a HuntProxy query, never HTTPQL. The
+                        // translator proves the text round-trips through our
+                        // parser and compiles through our SQL compiler, so a
+                        // faithful translation fails the import, not the run.
+                        let dsl = translate_httpql_to_dsl(query).map_err(|error| {
+                            invalid(format!(
+                                "node `{alias}` httpql query cannot be translated to a HuntProxy query: {error}"
+                            ))
+                        })?;
                         inputs.insert(
                             "query".into(),
                             FlowProperty::Const {
-                                value: Value::String(query.to_string()),
+                                value: Value::String(dsl),
                             },
                         );
                     }
-                    // `request` / `response` dropped: httpql-match defaults to
+                    // `request` / `response` dropped: query-match defaults to
                     // the triggering exchange.
                 }
                 if !inputs.contains_key("query") {
@@ -569,7 +576,7 @@ pub fn import_caido_definition(raw: &str) -> DomainResult<FlowDefinition> {
             ("exec", _) => "ok",
             (port, Some("caido/httpql-matches")) => {
                 return Err(invalid(format!(
-                    "edge from node `{source_alias}` uses exec port `{port}`, but HuntProxy's `flow/httpql-match` only emits `ok`; split the branch into an explicit `flow/if-else` on the `matches` output"
+                    "edge from node `{source_alias}` uses exec port `{port}`, but HuntProxy's `flow/query-match` only emits `ok`; split the branch into an explicit `flow/if-else` on the `matches` output"
                 )))
             }
             (port, _) => port,
@@ -623,7 +630,7 @@ fn convert_value(
             let mapped = map_output_name(source_def_id, &output, &alias)?;
             FlowProperty::Ref {
                 node: alias,
-                output: mapped.to_string(),
+                output: mapped,
             }
         }
         "string" | "bool" | "number" | "json" => FlowProperty::Const {
@@ -689,9 +696,18 @@ mod tests {
             .map(|n| n.node_type.as_str())
             .collect();
         assert!(types.contains(&"flow/on-intercept-response"));
-        assert!(types.contains(&"flow/httpql-match"));
+        assert!(types.contains(&"flow/query-match"));
         assert!(types.contains(&"flow/if-else"));
         assert!(types.contains(&"flow/set-color"));
+        // The httpql-matches query is stored translated into HuntProxy's own
+        // query language, never as HTTPQL.
+        let query_node = def.graph.nodes.iter().find(|n| n.alias == "match").unwrap();
+        assert_eq!(
+            query_node.inputs["query"],
+            FlowProperty::Const {
+                value: Value::String("request:~\"Sec-Fetch-Mode: navigate\"".into())
+            }
+        );
         // Edge into dropped passive-end is gone; source `exec` port maps to `ok`.
         assert_eq!(def.graph.edges.len(), 3);
         let branch = def

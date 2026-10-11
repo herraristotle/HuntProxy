@@ -515,7 +515,7 @@ async fn import_caido_passive_flow_creates_nodes() {
         .iter()
         .map(|n| n["type"].as_str().unwrap())
         .collect();
-    assert!(types.contains(&"flow/httpql-match"), "{types:?}");
+    assert!(types.contains(&"flow/query-match"), "{types:?}");
     assert!(types.contains(&"flow/if-else"), "{types:?}");
     assert!(types.contains(&"flow/set-color"), "{types:?}");
     assert!(types.contains(&"flow/on-intercept-response"), "{types:?}");
@@ -551,7 +551,7 @@ async fn import_caido_evalsso_with_scope_and_findings() {
         .collect();
     assert!(types.contains(&"flow/in-scope"), "{types:?}");
     assert!(types.contains(&"flow/report-finding"), "{types:?}");
-    assert!(types.contains(&"flow/httpql-match"), "{types:?}");
+    assert!(types.contains(&"flow/query-match"), "{types:?}");
 }
 
 #[tokio::test]
@@ -611,7 +611,7 @@ async fn catalog_lists_new_filter_nodes() {
     let nodes = body["nodes"].as_array().expect("node catalog");
     assert!(nodes
         .iter()
-        .any(|node| node["type_name"] == "flow/httpql-match"));
+        .any(|node| node["type_name"] == "flow/query-match"));
     assert!(nodes
         .iter()
         .any(|node| node["type_name"] == "flow/in-scope"));

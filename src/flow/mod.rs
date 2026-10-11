@@ -11,7 +11,7 @@ mod shell;
 mod validate;
 
 pub use convert::import_caido_definition;
-pub use httpql::{parse_httpql, HttpqlContext, HttpqlNeeds, HttpqlQuery};
+pub use httpql::translate_httpql_to_dsl;
 
 pub use interp::{
     trigger_kind_for, FlowRunOptions, FlowRunOutcome, FlowStepLog, FlowTrigger, NodeExecCtx,

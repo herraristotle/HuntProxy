@@ -8,14 +8,14 @@ use regex::RegexBuilder;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    DomainError, DomainResult, ErrorCode, ExchangeId, FlowNode, HeaderEntry, HeaderPatch,
-    MessageSide, ProjectId, ProtocolPreference, ReplyCredentialMode, ReplyDraft, ReplyInheritance,
+    DomainError, DomainResult, ErrorCode, ExchangeId, FlowNode, HeaderPatch, ProjectId,
+    ProtocolPreference, ReplyCredentialMode, ReplyDraft, ReplyInheritance,
 };
+use crate::history::{parse_text_query, validate_filter};
 use crate::policy::url_is_in_scope;
 use crate::reply::ReplyService;
 use crate::storage::Db;
 
-use super::httpql::{parse_httpql, HttpqlContext};
 use super::interp::{NodeExecCtx, NodeHandler, NodeOutcome};
 use super::js::run_flow_js;
 use super::shell::{run_flow_shell, shell_args, shell_timeout_ms, ShellRequest};
@@ -232,40 +232,22 @@ impl BuiltInHandler {
         Ok(NodeOutcome::port("ok").with("finding_id", Value::from(finding.id.get())))
     }
 
-    async fn httpql_match_node(
+    async fn query_match_node(
         &self,
         inputs: &BTreeMap<String, Value>,
         ctx: &NodeExecCtx<'_>,
     ) -> DomainResult<NodeOutcome> {
         let query_text = input_str(inputs, "query")?.to_string();
-        let parsed = parse_httpql(&query_text)?;
-        let needs = parsed.needs();
+        // The node consumes HuntProxy's own query language — the same
+        // grammar and compiler as History search — never HTTPQL. Imported
+        // Caido workflows arrive already translated by the converter.
+        let filter = parse_text_query(&query_text)?;
+        validate_filter(&filter)?;
         let exchange_id = self.resolve_exchange_id(inputs, ctx)?;
-        let db = self.db()?;
-        let summary = db.get_exchange_summary(ctx.project_id, exchange_id).await?;
-
-        let req_raw = if needs.req_raw {
-            load_side_raw(db, ctx.project_id, exchange_id, MessageSide::Request).await?
-        } else {
-            String::new()
-        };
-        let resp_raw = if needs.resp_raw {
-            load_side_raw(db, ctx.project_id, exchange_id, MessageSide::Response).await?
-        } else {
-            String::new()
-        };
-
-        let httpql_ctx = HttpqlContext {
-            req_raw: &req_raw,
-            req_query: summary.query.as_deref().unwrap_or(""),
-            req_path: &summary.path,
-            req_host: &summary.host,
-            req_method: &summary.method,
-            resp_raw: &resp_raw,
-            resp_mime: summary.mime.as_deref().unwrap_or(""),
-            resp_status: summary.status_code,
-        };
-        let matched = parsed.evaluate(&httpql_ctx);
+        let matched = self
+            .db()?
+            .exchange_matches_filter(ctx.project_id, exchange_id, filter)
+            .await?;
         Ok(NodeOutcome::port("ok").with("matches", Value::Bool(matched)))
     }
 
@@ -340,7 +322,7 @@ impl NodeHandler for BuiltInHandler {
             "flow/http-request" => self.http_node(inputs, ctx).await,
             "flow/set-color" => self.set_color_node(inputs, ctx).await,
             "flow/report-finding" => self.report_finding_node(inputs, ctx).await,
-            "flow/httpql-match" => self.httpql_match_node(inputs, ctx).await,
+            "flow/query-match" => self.query_match_node(inputs, ctx).await,
             "flow/in-scope" => self.in_scope_node(inputs, ctx).await,
             other => Err(DomainError::invalid(format!(
                 "node type `{other}` is not executable"
@@ -367,40 +349,6 @@ fn input_optional_str(
             "input `{name}` must be a string, got {other}"
         ))),
     }
-}
-
-/// Cap on raw text loaded for HTTPQL matching, so one huge body cannot
-/// exhaust memory inside a passive flow.
-const MAX_HTTPQL_RAW: usize = 1024 * 1024;
-
-/// Assemble one side of an exchange as raw text (status/request line plus
-/// headers plus body) for HTTPQL `req.raw` / `resp.raw` matching. Text is
-/// lossily decoded and capped at `MAX_HTTPQL_RAW` bytes.
-async fn load_side_raw(
-    db: &Db,
-    project_id: ProjectId,
-    exchange_id: ExchangeId,
-    side: MessageSide,
-) -> DomainResult<String> {
-    let headers: Vec<HeaderEntry> = db.load_raw_headers(project_id, exchange_id, side).await?;
-    let body = db.load_raw_body(project_id, exchange_id, side).await?;
-
-    let mut out = String::new();
-    for header in &headers {
-        let value = String::from_utf8_lossy(&header.value);
-        out.push_str(&header.name);
-        out.push_str(": ");
-        out.push_str(&value);
-        out.push_str("\r\n");
-        if out.len() >= MAX_HTTPQL_RAW {
-            break;
-        }
-    }
-    if let Some(body) = body {
-        let take = body.len().min(MAX_HTTPQL_RAW.saturating_sub(out.len()));
-        out.push_str(&String::from_utf8_lossy(&body[..take]));
-    }
-    Ok(out)
 }
 
 fn input_number(inputs: &BTreeMap<String, Value>, name: &str) -> Option<f64> {

@@ -677,6 +677,37 @@ impl Db {
         .await
     }
 
+    /// Evaluate a history filter against one exchange, reusing the exact
+    /// semantics of History search (same compiler, same body-scan SQL
+    /// functions). Used by the `flow/query-match` node so flows and the
+    /// search bar can never disagree about what a query means.
+    pub async fn exchange_matches_filter(
+        &self,
+        project_id: ProjectId,
+        exchange_id: ExchangeId,
+        filter: FilterNode,
+    ) -> DomainResult<bool> {
+        let (filter_sql, filter_binds) = filter_to_sql(&filter)?;
+        self.with_conn(move |conn| {
+            let mut bind_values: Vec<Value> = filter_binds.into_iter().map(Value::Text).collect();
+            let project_idx = bind_values.len() + 1;
+            bind_values.push(Value::Integer(project_id.get()));
+            let exchange_idx = bind_values.len() + 1;
+            bind_values.push(Value::Integer(exchange_id.get()));
+            let sql = format!(
+                "SELECT EXISTS(SELECT 1 FROM exchanges WHERE ({filter_sql}) \
+                 AND project_id=?{project_idx} AND exchange_id=?{exchange_idx})"
+            );
+            conn.query_row(
+                &sql,
+                rusqlite::params_from_iter(bind_values.iter()),
+                |row| row.get(0),
+            )
+            .map_err(storage_error)
+        })
+        .await
+    }
+
     pub async fn get_exchange_detail(
         &self,
         project_id: ProjectId,
