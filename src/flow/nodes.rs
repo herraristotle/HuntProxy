@@ -17,7 +17,7 @@ use crate::reply::ReplyService;
 use crate::storage::Db;
 
 use super::interp::{NodeExecCtx, NodeHandler, NodeOutcome};
-use super::js::run_flow_js;
+use super::js::{run_flow_js, JsHost};
 use super::shell::{run_flow_shell, shell_args, shell_timeout_ms, ShellRequest};
 
 const DEFAULT_JS_TIMEOUT_MS: u64 = 5_000;
@@ -28,14 +28,21 @@ pub struct BuiltInHandler {
     pub db: Option<Arc<Db>>,
     pub reply: Option<Arc<ReplyService>>,
     pub allow_shell: bool,
+    pub allow_js_network: bool,
 }
 
 impl BuiltInHandler {
-    pub fn new(db: Option<Arc<Db>>, reply: Option<Arc<ReplyService>>, allow_shell: bool) -> Self {
+    pub fn new(
+        db: Option<Arc<Db>>,
+        reply: Option<Arc<ReplyService>>,
+        allow_shell: bool,
+        allow_js_network: bool,
+    ) -> Self {
         Self {
             db,
             reply,
             allow_shell,
+            allow_js_network,
         }
     }
 
@@ -315,7 +322,13 @@ impl NodeHandler for BuiltInHandler {
                     MAX_JS_TIMEOUT_MS,
                     DEFAULT_JS_TIMEOUT_MS,
                 ));
-                let output = run_flow_js(&code, &input, timeout, ctx.cancel.clone()).await?;
+                let host = JsHost {
+                    allow_network: self.allow_js_network,
+                    reply: self.reply.clone(),
+                    db: self.db.clone(),
+                    project_id: ctx.project_id,
+                };
+                let output = run_flow_js(&code, &input, timeout, ctx.cancel.clone(), host).await?;
                 Ok(NodeOutcome::port("ok").with("output", output))
             }
             "flow/shell" => self.shell_node(node, inputs, ctx).await,

@@ -113,13 +113,10 @@ fn map_definition(def_id: &str, alias: &str) -> DomainResult<Option<&'static str
         "caido/code-js" => Some("flow/js"),
         "caido/httpql-matches" => Some("flow/query-match"),
         "caido/in-scope" => Some("flow/in-scope"),
-        "caido/base64-encode" | "caido/base64-decode" | "caido/url-encode"
-        | "caido/url-decode" => Some("flow/js"),
-        "caido/http-code-js" => {
-            return Err(invalid(format!(
-                "node `{alias}` uses `caido/http-code-js`, which has no HuntProxy equivalent (JavaScript with inline HTTP); remove it or split it into `flow/js` + `flow/http-request` nodes before importing"
-            )))
+        "caido/base64-encode" | "caido/base64-decode" | "caido/url-encode" | "caido/url-decode" => {
+            Some("flow/js")
         }
+        "caido/http-code-js" => Some("flow/js"),
         other => {
             return Err(invalid(format!(
                 "node `{alias}` uses unsupported Caido definition `{other}`"
@@ -132,7 +129,7 @@ fn map_definition(def_id: &str, alias: &str) -> DomainResult<Option<&'static str
 /// Caido `definition_id`.
 fn map_output_name(caido_def_id: &str, output: &str, alias: &str) -> DomainResult<String> {
     Ok(match (caido_def_id, output) {
-        ("caido/code-js", "data") => "output".to_string(),
+        ("caido/code-js" | "caido/http-code-js", "data") => "output".to_string(),
         (
             "caido/base64-encode"
             | "caido/base64-decode"
@@ -146,10 +143,11 @@ fn map_output_name(caido_def_id: &str, output: &str, alias: &str) -> DomainResul
                 "reference to `{alias}.{output}` has no HuntProxy equivalent; active-start only provides `input`"
             )))
         }
+        // Passive triggers expose a single `exchange` summary object; Caido
+        // scripts that consumed `request`/`response` now read it from the
+        // shaped `input.request` / `input.response` handles.
         ("caido/on-intercept-request" | "caido/on-intercept-response", "request" | "response") => {
-            return Err(invalid(format!(
-                "reference to `{alias}.{output}` has no HuntProxy equivalent; use the exchange summary outputs (status, method, url) instead"
-            )))
+            "exchange".to_string()
         }
         _ => output.to_string(),
     })
@@ -463,6 +461,36 @@ pub fn import_caido_definition(raw: &str) -> DomainResult<FlowDefinition> {
                     )));
                 }
             }
+            "caido/http-code-js" => {
+                // The script receives the shaped exchange summary as `input`,
+                // whose `.request` / `.response` handles replace Caido's
+                // per-input wiring, so a ref to either collapses into `input`.
+                let mut input_prop: Option<FlowProperty> = None;
+                for (in_alias, value) in &raw_inputs {
+                    match in_alias.as_str() {
+                        "code" => {
+                            inputs.insert(
+                                "code".into(),
+                                convert_value(value, &alias_to_def_id, alias)?,
+                            );
+                        }
+                        "request" | "response" => {
+                            if input_prop.is_none() {
+                                input_prop = Some(convert_value(value, &alias_to_def_id, alias)?);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(property) = input_prop {
+                    inputs.insert("input".into(), property);
+                }
+                if !inputs.contains_key("code") {
+                    return Err(invalid(format!(
+                        "node `{alias}` is missing required input `code`"
+                    )));
+                }
+            }
             "caido/httpql-matches" => {
                 for (in_alias, value) in &raw_inputs {
                     if in_alias == "query" {
@@ -572,8 +600,7 @@ pub fn import_caido_definition(raw: &str) -> DomainResult<FlowDefinition> {
         // continue on `exec` (the interpreter seeds the start node with
         // that port); action and condition nodes continue on `ok`.
         // `httpql-matches` occasionally uses a `true` branch port in store
-        // samples (always alongside http-code-js, which we refuse); fail
-        // loudly rather than silently rewiring it.
+        // samples; fail loudly rather than silently rewiring it.
         let source_def = alias_to_def_id.get(source_alias).map(String::as_str);
         let mapped_source_port = match (source_port, source_def) {
             (
@@ -782,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_http_code_js() {
+    fn imports_http_code_js() {
         let sample = r#"{
           "edition": 2, "kind": "active", "name": "CORS", "description": "",
           "graph": {
@@ -794,8 +821,48 @@ mod tests {
             ]
           }
         }"#;
-        let err = import_caido_definition(sample).unwrap_err();
-        assert!(err.to_string().contains("http-code-js"));
+        let def = import_caido_definition(sample).unwrap();
+        let js = def.graph.nodes.iter().find(|n| n.alias == "js").unwrap();
+        assert_eq!(js.node_type, "flow/js");
+        match &js.inputs["code"] {
+            FlowProperty::Const {
+                value: Value::String(s),
+            } => assert_eq!(s, "return 1;"),
+            other => panic!("expected const code, got {other:?}"),
+        }
+        crate::flow::validate_flow(&def).unwrap();
+    }
+
+    /// Caido wires `request`/`response` refs into the node; HuntProxy passes
+    /// one `input` carrying the shaped summary, so either ref collapses there.
+    #[test]
+    fn collapses_request_response_refs_into_input() {
+        let sample = r#"{
+          "edition": 2, "kind": "passive", "name": "Header", "description": "",
+          "graph": {
+            "edges": [],
+            "nodes": [
+              {"alias": "on_intercept", "definition_id": "caido/on-intercept-response", "id": 0, "inputs": []},
+              {"alias": "js", "definition_id": "caido/http-code-js", "id": 1,
+               "inputs": [
+                 {"alias": "code", "value": {"data": "return 1;", "kind": "string"}},
+                 {"alias": "request", "value": {"data": "$on_intercept.request", "kind": "ref"}},
+                 {"alias": "response", "value": {"data": "$on_intercept.response", "kind": "ref"}}
+               ]}
+            ]
+          }
+        }"#;
+        let def = import_caido_definition(sample).unwrap();
+        let js = def.graph.nodes.iter().find(|n| n.alias == "js").unwrap();
+        assert!(
+            matches!(
+                js.inputs["input"],
+                FlowProperty::Ref { ref node, ref output } if node == "on_intercept" && output == "exchange"
+            ),
+            "expected exchange ref, got {:?}",
+            js.inputs["input"]
+        );
+        crate::flow::validate_flow(&def).unwrap();
     }
 
     #[test]
@@ -871,22 +938,58 @@ mod tests {
         }
     }
 
-    /// `http-code-js` (used by all 19 sophisticated store samples, including
-    /// every `active` workflow) must be refused with a clear error.
+    /// `http-code-js` shows up in the real store shapes too (every `active`
+    /// workflow). Wire it to the trigger and assert the edge ports validate:
+    /// the trigger's `exec` output maps to the action node's `ok` output
+    /// port, while the action node's exec *input* port stays `exec`.
     #[test]
-    fn refuses_http_code_js_fixture_shape() {
+    fn imports_http_code_js_fixture_shape() {
         let sample = include_str!("../../tests/fixtures/caido/evalsso.json");
-        // evalsso is importable; inject an http-code-js node to prove the
-        // rejection path fires on the real shape.
         let mut root: Value = serde_json::from_str(sample).unwrap();
+        let trigger_id = root["graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["definition_id"] == "caido/on-intercept-response")
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
         let nodes = root["graph"]["nodes"].as_array_mut().unwrap();
         nodes.push(serde_json::json!({
             "alias": "js",
             "definition_id": "caido/http-code-js",
             "id": 999,
-            "inputs": []
+            "inputs": [
+                {"alias": "code", "value": {"data": "return 1;", "kind": "string"}},
+                {"alias": "request", "value": {"data": "$on_intercept_response.request", "kind": "ref"}}
+            ]
         }));
-        let err = import_caido_definition(&root.to_string()).unwrap_err();
-        assert!(err.to_string().contains("http-code-js"));
+        root["graph"]["edges"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "source": {"exec_alias": "exec", "node_id": trigger_id},
+                "target": {"exec_alias": "exec", "node_id": 999}
+            }));
+        let def = import_caido_definition(&root.to_string()).unwrap();
+        let js = def.graph.nodes.iter().find(|n| n.alias == "js").unwrap();
+        assert_eq!(js.node_type, "flow/js");
+        assert!(
+            matches!(
+                js.inputs["input"],
+                FlowProperty::Ref { ref node, ref output } if node == "on_intercept_response" && output == "exchange"
+            ),
+            "expected exchange ref, got {:?}",
+            js.inputs["input"]
+        );
+        let edge = def
+            .graph
+            .edges
+            .iter()
+            .find(|e| e.source.node == "on_intercept_response" && e.target.node == "js")
+            .unwrap();
+        assert_eq!(edge.source.port, "exec");
+        assert_eq!(edge.target.port, "exec");
+        crate::flow::validate_flow(&def).unwrap();
     }
 }

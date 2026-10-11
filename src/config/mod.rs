@@ -70,11 +70,18 @@ pub struct UpstreamProxyRule {
 pub struct FlowsConfig {
     /// Allow `flow/shell` nodes to execute commands on this machine.
     pub allow_shell: bool,
+    /// Allow `flow/js` nodes to send HTTP requests through the Reply service
+    /// (the `sdk.requests.send` SDK surface used by imported Caido
+    /// `http-code-js` workflows). Disabled by default.
+    pub allow_js_network: bool,
 }
 
 impl Default for FlowsConfig {
     fn default() -> Self {
-        Self { allow_shell: true }
+        Self {
+            allow_shell: true,
+            allow_js_network: false,
+        }
     }
 }
 

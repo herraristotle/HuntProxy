@@ -358,7 +358,10 @@ async fn flow_shell_kill_switch_blocks_shell_node() {
                 .join("browser-worker")
                 .join("index.js"),
         ),
-        flows: huntproxy::config::FlowsConfig { allow_shell: false },
+        flows: huntproxy::config::FlowsConfig {
+            allow_shell: false,
+            allow_js_network: false,
+        },
         ..Config::default()
     };
     let state = bootstrap_state(config).await.unwrap();

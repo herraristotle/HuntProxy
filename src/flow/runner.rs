@@ -59,6 +59,7 @@ pub struct FlowService {
     db: Arc<Db>,
     reply: Option<Arc<ReplyService>>,
     allow_shell: bool,
+    allow_js_network: bool,
     shutdown: CancellationToken,
     jobs: Arc<Mutex<HashMap<Uuid, JobEntry>>>,
     events: std::sync::Mutex<Option<broadcast::Sender<crate::app::AppEvent>>>,
@@ -69,12 +70,14 @@ impl FlowService {
         db: Arc<Db>,
         reply: Option<Arc<ReplyService>>,
         allow_shell: bool,
+        allow_js_network: bool,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         Arc::new(Self {
             db,
             reply,
             allow_shell,
+            allow_js_network,
             shutdown,
             jobs: Arc::new(Mutex::new(HashMap::new())),
             events: std::sync::Mutex::new(None),
@@ -242,12 +245,13 @@ impl FlowService {
         let db = Arc::clone(&self.db);
         let reply = self.reply.clone();
         let allow_shell = self.allow_shell;
+        let allow_js_network = self.allow_js_network;
         let shutdown = self.shutdown.clone();
         let run_cancel = cancel.clone();
         let job_cancel = cancel;
         let events = self.events.lock().expect("flow events lock").clone();
         tokio::spawn(async move {
-            let handler = BuiltInHandler::new(Some(db), reply, allow_shell);
+            let handler = BuiltInHandler::new(Some(db), reply, allow_shell, allow_js_network);
             let options = FlowRunOptions {
                 cancel: run_cancel.clone(),
                 project_id,
@@ -398,7 +402,7 @@ mod tests {
     #[tokio::test]
     async fn manual_flow_runs_to_success() {
         let (_dir, db, project_id) = setup().await;
-        let service = FlowService::new(db.clone(), None, true, CancellationToken::new());
+        let service = FlowService::new(db.clone(), None, true, false, CancellationToken::new());
         let flow = db
             .create_flow(project_id, manual_flow("echo", "hello"))
             .await
@@ -422,7 +426,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_wrong_trigger_and_disabled_flow() {
         let (_dir, db, project_id) = setup().await;
-        let service = FlowService::new(db.clone(), None, true, CancellationToken::new());
+        let service = FlowService::new(db.clone(), None, true, false, CancellationToken::new());
         let flow = db
             .create_flow(project_id, manual_flow("echo", "hi"))
             .await
@@ -459,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_marks_job_cancelled() {
         let (_dir, db, project_id) = setup().await;
-        let service = FlowService::new(db.clone(), None, true, CancellationToken::new());
+        let service = FlowService::new(db.clone(), None, true, false, CancellationToken::new());
         let definition = serde_json::from_value::<FlowDefinition>(serde_json::json!({
             "edition": 1,
             "kind": "active",
@@ -498,7 +502,7 @@ mod tests {
     #[tokio::test]
     async fn passive_trigger_skips_when_no_passive_flows() {
         let (_dir, db, project_id) = setup().await;
-        let service = FlowService::new(db.clone(), None, true, CancellationToken::new());
+        let service = FlowService::new(db.clone(), None, true, false, CancellationToken::new());
         let spawned = service
             .trigger_passive(project_id, serde_json::json!({"exchange_id": 1}))
             .await
