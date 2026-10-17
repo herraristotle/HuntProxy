@@ -17,6 +17,7 @@ use axum::{Json, Router};
 use futures::stream::Stream;
 use futures::StreamExt;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -320,6 +321,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/projects/{id}/fuzz-jobs/{jid}/cases/{case_id}/diff",
             get(fuzz_case_diff),
+        )
+        .route(
+            "/api/v1/projects/{id}/fuzz-jobs/{jid}/oast/interactions",
+            get(fuzz_oast_interactions),
         )
         .route(
             "/api/v1/projects/{id}/websockets",
@@ -1490,6 +1495,7 @@ async fn flow_node_catalog() -> Response {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OastCreateBody {
     purpose: Option<String>,
     watch: Option<bool>,
@@ -1497,6 +1503,7 @@ struct OastCreateBody {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OastNewUrlBody {
     case_index: Option<i64>,
 }
@@ -2417,13 +2424,113 @@ async fn list_fuzz_cases(
             .await
     };
     match result {
-        Ok((cases, next)) => Json(serde_json::json!({
-            "cases": cases,
-            "next_before_case_index": next,
-        }))
-        .into_response(),
+        Ok((cases, next)) => {
+            // Mirror the MCP `fuzz_manage` "cases" action: cases of jobs
+            // started with an oast generator carry the job's session id and
+            // their exact correlation label, if minted.
+            let context =
+                match crate::oast::load_oast_job_context(&state, ProjectId(id), FuzzJobId(jid))
+                    .await
+                {
+                    Ok(context) => context,
+                    Err(error) => return error_response(error),
+                };
+            let cases = cases
+                .into_iter()
+                .map(|case| {
+                    let mut value =
+                        serde_json::to_value(&case).unwrap_or_else(|_| serde_json::json!({}));
+                    if let Some(context) = &context {
+                        value["oast_session_id"] = serde_json::json!(context.session_id);
+                        value["oast_label"] =
+                            serde_json::json!(context.labels.get(&case.case_index));
+                    }
+                    value
+                })
+                .collect::<Vec<_>>();
+            Json(serde_json::json!({
+                "cases": cases,
+                "next_before_case_index": next,
+            }))
+            .into_response()
+        }
         Err(error) => error_response(error),
     }
+}
+
+#[derive(Deserialize, Default)]
+struct FuzzOastInteractionsQuery {
+    limit: Option<i64>,
+}
+
+/// REST mirror of the MCP `fuzz_manage` `oast_poll` action: persist fresh
+/// interactions, then return the stored set grouped by case index using exact
+/// label correlation. Unmapped interactions arrive via shared-URL providers.
+async fn fuzz_oast_interactions(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+    Query(query): Query<FuzzOastInteractionsQuery>,
+) -> Response {
+    let context = match crate::oast::load_oast_job_context(&state, ProjectId(id), FuzzJobId(jid))
+        .await
+    {
+        Ok(Some(context)) => context,
+        Ok(None) => return error_response(DomainError::invalid("fuzz job has no oast session")),
+        Err(error) => return error_response(error),
+    };
+    // Persist fresh interactions first, then group the full stored set (the
+    // background poller may have seen some).
+    if let Err(error) = state.oast.poll(id, context.session_id).await {
+        return error_response(error);
+    }
+    let limit = query.limit.unwrap_or(500).clamp(1, 500);
+    let page = match state
+        .oast
+        .interactions(id, context.session_id, None, Some(limit), None)
+        .await
+    {
+        Ok(page) => page,
+        Err(error) => return error_response(error),
+    };
+    let mut by_case: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+    let mut unmapped: Vec<serde_json::Value> = Vec::new();
+    for hit in page.interactions {
+        let mut value = serde_json::json!(hit);
+        let full_id = value["full_id"].as_str().unwrap_or("").to_string();
+        let matched = context
+            .labels
+            .iter()
+            // Interactions persist a domain-normalized `full_id` equal to the
+            // minted label, so this is an exact correlation — prefix matching
+            // would let label `a1b2c3...` swallow a longer label sharing the
+            // same correlation prefix.
+            .find(|(_, label)| full_id == *label.as_str());
+        match matched {
+            Some((case_index, label)) => {
+                value["label"] = serde_json::json!(label);
+                value["case_index"] = serde_json::json!(case_index);
+                by_case
+                    .entry(case_index.to_string())
+                    .or_default()
+                    .push(value);
+            }
+            None => unmapped.push(value),
+        }
+    }
+    serde_json::json!({
+        "session_id": context.session_id,
+        "total": page.total,
+        "by_case": by_case,
+        "unmapped": unmapped,
+        "payload_url": context.payload_url,
+        "per_case_labels": context.per_case_labels,
+        "note": if context.per_case_labels {
+            serde_json::json!("interactsh mints one payload url per case")
+        } else {
+            serde_json::json!("single-URL provider: every case shares one payload url; interactions cannot be mapped to cases")
+        },
+    })
+    .into_response()
 }
 
 async fn list_fuzz_groups(
