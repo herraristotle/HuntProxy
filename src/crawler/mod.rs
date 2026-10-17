@@ -1,26 +1,4 @@
-//! Small, one-level background crawler for browser-loaded HTML pages, plus
-//! the managed multi-level crawl engine (`engine.rs` / `jobs.rs`).
-
-mod engine;
-mod filter;
-mod jobs;
-mod queue;
-mod rate_limit;
-mod robots;
-mod stats;
-mod types;
-
-pub use engine::{CrawlEngine, CrawlEngineConfig};
-pub use filter::{filter_matches_url, parse_crawl_filter};
-pub use jobs::{CrawlJobManager, StartCrawlRequest};
-pub use queue::{CrawlQueue, QueueStats};
-pub use rate_limit::RateLimiter;
-pub use robots::{RobotsHandler, RobotsTxt};
-pub use stats::StatsTracker;
-pub use types::{
-    compute_unique_key, filter_links_by_strategy, CrawlRequest, CrawlRequestState, CrawlStats,
-    CrawlerOptions, LinkStrategy,
-};
+//! Small, one-level background crawler for browser-loaded HTML pages.
 
 use crate::app::AppEvent;
 use crate::browser::BrowserService;
@@ -250,7 +228,7 @@ impl CrawlerService {
     }
 }
 
-pub(crate) fn is_html_mime(mime: Option<&str>) -> bool {
+fn is_html_mime(mime: Option<&str>) -> bool {
     mime.is_some_and(|mime| {
         let mime = mime
             .split(';')
@@ -272,7 +250,7 @@ fn exchange_url(summary: &ExchangeSummary) -> DomainResult<String> {
         .ok_or_else(|| DomainError::invalid("browser exchange has an invalid HTTP URL"))
 }
 
-pub(crate) fn discover_links(base: &str, html: &str) -> DomainResult<Vec<String>> {
+fn discover_links(base: &str, html: &str) -> DomainResult<Vec<String>> {
     let base = Url::parse(base).map_err(|error| DomainError::invalid(error.to_string()))?;
     let mut found = Vec::new();
     let mut unique = HashSet::new();

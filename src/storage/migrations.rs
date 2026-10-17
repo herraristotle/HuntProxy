@@ -62,10 +62,6 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "015_browser_profiles",
         include_str!("../../migrations/015_browser_profiles.sql"),
     ),
-    (
-        "016_crawl_jobs",
-        include_str!("../../migrations/016_crawl_jobs.sql"),
-    ),
     ("017_oast", include_str!("../../migrations/017_oast.sql")),
 ];
 

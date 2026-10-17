@@ -5,7 +5,6 @@ mod audit;
 mod bodies;
 mod browser_store;
 mod cookies;
-mod crawl_store;
 mod db;
 mod exchanges;
 mod findings;
@@ -37,8 +36,6 @@ pub use audit::*;
 pub use browser_store::*;
 #[allow(unused_imports)]
 pub use cookies::*;
-#[allow(unused_imports)]
-pub use crawl_store::*;
 #[allow(unused_imports)]
 pub use findings::*;
 #[allow(unused_imports)]

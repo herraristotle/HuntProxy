@@ -1148,11 +1148,6 @@ mod tests {
             browser.clone(),
             events.clone(),
         ));
-        let crawl_jobs = Arc::new(crate::crawler::CrawlJobManager::new(
-            db.clone(),
-            reply.clone(),
-            events.clone(),
-        ));
         let plugins = Arc::new(
             crate::plugins::PluginService::load(
                 config.plugin_dir.clone(),
@@ -1177,7 +1172,6 @@ mod tests {
             fuzzer,
             browser,
             crawler,
-            crawl_jobs,
             plugins,
             websocket: Arc::new(crate::websocket::WebSocketService::new()),
             flows,

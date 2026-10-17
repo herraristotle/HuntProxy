@@ -322,20 +322,6 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(fuzz_case_diff),
         )
         .route(
-            "/api/v1/projects/{id}/crawl-jobs",
-            get(list_crawl_jobs)
-                .post(start_crawl)
-                .layer(DefaultBodyLimit::max(payload_body_limit)),
-        )
-        .route(
-            "/api/v1/projects/{id}/crawl-jobs/{jid}/cancel",
-            post(cancel_crawl),
-        )
-        .route(
-            "/api/v1/projects/{id}/crawl-jobs/{jid}",
-            delete(delete_crawl),
-        )
-        .route(
             "/api/v1/projects/{id}/websockets",
             get(list_websocket_connections),
         )
@@ -2392,70 +2378,6 @@ async fn cancel_fuzz(
             });
             StatusCode::NO_CONTENT.into_response()
         }
-        Err(e) => error_response(e),
-    }
-}
-
-async fn list_crawl_jobs(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
-    match state.crawl_jobs.list(ProjectId(id)).await {
-        Ok(jobs) => Json(serde_json::json!({ "jobs": jobs })).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-async fn start_crawl(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
-    Json(body): Json<crate::crawler::StartCrawlRequest>,
-) -> Response {
-    match state.crawl_jobs.start(ProjectId(id), body).await {
-        Ok(job) => {
-            let _ = state.events.send(AppEvent {
-                project_id: id,
-                kind: "crawl".into(),
-                payload: serde_json::json!({
-                    "job_id": job.id.get(),
-                    "state": job.state,
-                    "action": "started",
-                }),
-            });
-            (StatusCode::CREATED, Json(job)).into_response()
-        }
-        Err(e) => error_response(e),
-    }
-}
-
-async fn cancel_crawl(
-    State(state): State<Arc<AppState>>,
-    Path((id, jid)): Path<(i64, i64)>,
-) -> Response {
-    match state
-        .crawl_jobs
-        .cancel_for_project(ProjectId(id), CrawlJobId(jid))
-        .await
-    {
-        Ok(()) => {
-            let _ = state.events.send(AppEvent {
-                project_id: id,
-                kind: "crawl".into(),
-                payload: serde_json::json!({ "job_id": jid, "state": "cancelling" }),
-            });
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(e) => error_response(e),
-    }
-}
-
-async fn delete_crawl(
-    State(state): State<Arc<AppState>>,
-    Path((id, jid)): Path<(i64, i64)>,
-) -> Response {
-    match state
-        .crawl_jobs
-        .delete(ProjectId(id), CrawlJobId(jid))
-        .await
-    {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => error_response(e),
     }
 }

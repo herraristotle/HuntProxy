@@ -39,7 +39,6 @@ id_newtype!(ExchangeId);
 id_newtype!(CaptureSessionId);
 id_newtype!(ReplyTabId);
 id_newtype!(FuzzJobId);
-id_newtype!(CrawlJobId);
 id_newtype!(BrowserSessionId);
 id_newtype!(BrowserActionId);
 id_newtype!(AnnotationId);
