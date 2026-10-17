@@ -31,9 +31,11 @@ pub struct AppState {
     pub fuzzer: Arc<FuzzerService>,
     pub browser: Arc<BrowserService>,
     pub crawler: Arc<CrawlerService>,
+    pub crawl_jobs: Arc<crate::crawler::CrawlJobManager>,
     pub plugins: Arc<crate::plugins::PluginService>,
     pub websocket: crate::websocket::SharedWebSocketService,
     pub flows: Arc<crate::flow::FlowService>,
+    pub oast: Arc<crate::oast::OastService>,
     pub events: broadcast::Sender<AppEvent>,
     pub shutdown: CancellationToken,
     pub activity: ActivityTracker,
@@ -231,6 +233,7 @@ pub async fn run_daemon(mut config: Config) -> DomainResult<()> {
     };
     state.shutdown.cancel();
     state.flows.shutdown();
+    state.oast.shutdown();
     match tokio::time::timeout(Duration::from_secs(5), state.browser.stop_all()).await {
         Ok(Ok(_)) => {}
         Ok(Err(error)) => tracing::warn!(%error, "failed to stop every browser during shutdown"),
@@ -331,6 +334,10 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
     if interrupted_fuzz > 0 {
         tracing::warn!(count = interrupted_fuzz, "marked fuzz jobs interrupted");
     }
+    let interrupted_crawl = db.mark_crawl_jobs_interrupted().await.unwrap_or(0);
+    if interrupted_crawl > 0 {
+        tracing::warn!(count = interrupted_crawl, "marked crawl jobs interrupted");
+    }
 
     let transport = build_default_transport(config.max_body_bytes);
     let key_bytes = std::fs::read(config.placeholder_key_path()).unwrap_or_else(|_| {
@@ -352,9 +359,12 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
         placeholder_key: PlaceholderKey::from_bytes(key_bytes.clone()),
         upstream_proxies: config.upstream_proxies.clone(),
     });
+    let oast = crate::oast::OastService::new(db.clone(), config.oast.clone())?;
+    oast.start_poller().await;
     let fuzzer = Arc::new(FuzzerService::new(
         db.clone(),
         reply.clone(),
+        oast.clone(),
         PlaceholderKey::from_bytes(key_bytes),
     ));
     let managed_worker = config.browser_worker_path.clone().or_else(|| {
@@ -389,6 +399,11 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
         browser.clone(),
         events.clone(),
     ));
+    let crawl_jobs = Arc::new(crate::crawler::CrawlJobManager::new(
+        db.clone(),
+        reply.clone(),
+        events.clone(),
+    ));
     let websocket = Arc::new(crate::websocket::WebSocketService::new());
     let shutdown = CancellationToken::new();
     let flows = crate::flow::FlowService::new(
@@ -407,9 +422,11 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
         fuzzer,
         browser,
         crawler,
+        crawl_jobs,
         plugins,
         websocket,
         flows,
+        oast,
         events,
         shutdown,
         activity: ActivityTracker::new(),

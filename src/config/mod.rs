@@ -54,6 +54,9 @@ pub struct Config {
     /// Flow engine execution settings.
     #[serde(default)]
     pub flows: FlowsConfig,
+    /// Out-of-band interaction tracking (OAST) client settings.
+    #[serde(default)]
+    pub oast: OastConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -98,6 +101,187 @@ impl Default for FlowsConfig {
             allow_js_network: false,
         }
     }
+}
+
+/// OAST provider selection. The client is disabled until a provider is
+/// configured with whatever fields that provider requires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OastProviderKind {
+    /// Mainline interactsh protocol against a self-hosted server.
+    Interactsh,
+    /// postb.in-style destructive-shift bin service.
+    Postbin,
+    /// webhook.site token service.
+    Webhooksite,
+    /// User-supplied poll URL returning interactions as JSON.
+    Custom,
+}
+
+impl OastProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactsh => "interactsh",
+            Self::Postbin => "postbin",
+            Self::Webhooksite => "webhooksite",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn parse(value: &str) -> DomainResult<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "interactsh" => Ok(Self::Interactsh),
+            "postbin" => Ok(Self::Postbin),
+            "webhooksite" => Ok(Self::Webhooksite),
+            "custom" => Ok(Self::Custom),
+            other => Err(DomainError::new(
+                ErrorCode::ConfigInvalid,
+                format!(
+                    "oast provider must be interactsh, postbin, webhooksite, or custom (got {other})"
+                ),
+            )),
+        }
+    }
+}
+
+/// `[oast]` section. Omit the section (or leave it defaulted) to disable the
+/// `oast` MCP tool and REST surface entirely.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OastConfig {
+    /// Which OAST provider implementation to use.
+    pub provider: Option<OastProviderKind>,
+    /// Provider base URL. Required for interactsh and custom; postbin and
+    /// webhooksite apply public defaults when empty.
+    pub server: String,
+    /// Payload domain for the interactsh provider (server `-domain`).
+    pub domain: String,
+    /// Optional auth: interactsh server `-auth` token, or custom Bearer token.
+    pub token: String,
+    /// Per-request timeout for register/poll HTTP calls.
+    pub poll_timeout_ms: u64,
+    /// Background poller over `watch=1` sessions.
+    pub auto_poll: bool,
+    /// Background poll cadence; clamped to 1s..=5min by the poller.
+    pub poll_interval_ms: u64,
+}
+
+impl Default for OastConfig {
+    fn default() -> Self {
+        Self {
+            provider: None,
+            server: String::new(),
+            domain: String::new(),
+            token: String::new(),
+            poll_timeout_ms: 10_000,
+            auto_poll: true,
+            poll_interval_ms: 5_000,
+        }
+    }
+}
+
+impl OastConfig {
+    /// True when a provider is selected and every required field for that
+    /// provider is present. The host treats `false` as "oast disabled".
+    pub fn is_enabled(&self) -> bool {
+        self.provider.is_some() && self.validate().is_ok()
+    }
+
+    /// Effective server URL: explicit config, else the public default for
+    /// SaaS providers. Empty for interactsh/custom when unset.
+    pub fn effective_server(&self) -> String {
+        match self.provider {
+            Some(OastProviderKind::Postbin) if self.server.trim().is_empty() => {
+                "https://www.postb.in".to_string()
+            }
+            Some(OastProviderKind::Webhooksite) if self.server.trim().is_empty() => {
+                "https://webhook.site".to_string()
+            }
+            _ => self.server.trim().trim_end_matches('/').to_string(),
+        }
+    }
+
+    pub fn validate(&self) -> DomainResult<()> {
+        let Some(provider) = self.provider else {
+            return Ok(());
+        };
+        match provider {
+            OastProviderKind::Interactsh => {
+                if self.server.trim().is_empty() || self.domain.trim().is_empty() {
+                    return Err(DomainError::new(
+                        ErrorCode::ConfigInvalid,
+                        "oast provider interactsh requires server and domain",
+                    ));
+                }
+                validate_oast_http_url(&self.server, "oast server")?;
+            }
+            OastProviderKind::Custom => {
+                if self.server.trim().is_empty() {
+                    return Err(DomainError::new(
+                        ErrorCode::ConfigInvalid,
+                        "oast provider custom requires server (the poll URL)",
+                    ));
+                }
+                validate_oast_http_url(&self.server, "oast server")?;
+            }
+            OastProviderKind::Postbin | OastProviderKind::Webhooksite => {
+                if !self.server.trim().is_empty() {
+                    validate_oast_http_url(&self.server, "oast server")?;
+                }
+            }
+        }
+        if self.poll_timeout_ms == 0 {
+            return Err(DomainError::new(
+                ErrorCode::ConfigInvalid,
+                "oast poll_timeout_ms must be greater than zero",
+            ));
+        }
+        if self.poll_interval_ms == 0 {
+            return Err(DomainError::new(
+                ErrorCode::ConfigInvalid,
+                "oast poll_interval_ms must be greater than zero",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Apply `HUNTPROXY_OAST_*` env overrides (ops parity with enigma's
+    /// `INTERACTSH_*`). Invalid values are surfaced as config errors.
+    pub fn apply_env(&mut self) -> DomainResult<()> {
+        if let Ok(v) = std::env::var("HUNTPROXY_OAST_PROVIDER") {
+            if !v.trim().is_empty() {
+                self.provider = Some(OastProviderKind::parse(&v)?);
+            }
+        }
+        if let Ok(v) = std::env::var("HUNTPROXY_OAST_SERVER") {
+            self.server = v;
+        }
+        if let Ok(v) = std::env::var("HUNTPROXY_OAST_DOMAIN") {
+            self.domain = v;
+        }
+        if let Ok(v) = std::env::var("HUNTPROXY_OAST_TOKEN") {
+            self.token = v;
+        }
+        Ok(())
+    }
+}
+
+fn validate_oast_http_url(value: &str, what: &str) -> DomainResult<()> {
+    let parsed = url::Url::parse(value)
+        .map_err(|_| DomainError::new(ErrorCode::ConfigInvalid, format!("invalid {what} URL")))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(DomainError::new(
+            ErrorCode::ConfigInvalid,
+            format!("{what} scheme must be http or https"),
+        ));
+    }
+    if parsed.host_str().is_none() {
+        return Err(DomainError::new(
+            ErrorCode::ConfigInvalid,
+            format!("{what} requires a host"),
+        ));
+    }
+    Ok(())
 }
 
 impl UpstreamProxyConfig {
@@ -249,6 +433,7 @@ impl Default for Config {
             idle_timeout_seconds: 60 * 60,
             upstream_proxies: UpstreamProxyConfig::default(),
             flows: FlowsConfig::default(),
+            oast: OastConfig::default(),
         }
     }
 }
@@ -279,6 +464,7 @@ impl Config {
         {
             cfg.browser_worker_path = Some(PathBuf::from(path));
         }
+        cfg.oast.apply_env()?;
         if cfg.node_path.as_ref().is_none_or(|path| !path.is_file()) {
             let managed_node = cfg.runtime_dir.join("node/bin/node");
             if managed_node.is_file() {
@@ -341,6 +527,9 @@ impl Config {
         if let Some(v) = f.flows {
             self.flows = v;
         }
+        if let Some(v) = f.oast {
+            self.oast = v;
+        }
     }
 
     pub fn validate(&self) -> DomainResult<()> {
@@ -366,6 +555,7 @@ impl Config {
             ));
         }
         self.upstream_proxies.validate()?;
+        self.oast.validate()?;
         Ok(())
     }
 
@@ -450,6 +640,7 @@ impl Config {
             plugin_dir: Some(self.plugin_dir.display().to_string()),
             upstream_proxies: Some(self.upstream_proxies.clone()),
             flows: Some(self.flows.clone()),
+            oast: Some(self.oast.clone()),
         };
         let text = toml::to_string_pretty(&file).map_err(|e| {
             DomainError::new(ErrorCode::ConfigInvalid, format!("serialize config: {e}"))
@@ -476,6 +667,7 @@ struct ConfigFile {
     plugin_dir: Option<String>,
     upstream_proxies: Option<UpstreamProxyConfig>,
     flows: Option<FlowsConfig>,
+    oast: Option<OastConfig>,
 }
 
 pub fn default_data_dir() -> PathBuf {
@@ -731,5 +923,74 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn oast_is_disabled_until_a_valid_provider_is_configured() {
+        let oast = OastConfig::default();
+        assert!(!oast.is_enabled());
+        assert!(oast.validate().is_ok());
+
+        let partial = OastConfig {
+            provider: Some(OastProviderKind::Interactsh),
+            ..OastConfig::default()
+        };
+        assert!(!partial.is_enabled());
+        assert!(partial.validate().is_err());
+
+        let interactsh = OastConfig {
+            provider: Some(OastProviderKind::Interactsh),
+            server: "https://oast.example.com".into(),
+            domain: "oast.example.com".into(),
+            ..OastConfig::default()
+        };
+        assert!(interactsh.is_enabled());
+    }
+
+    #[test]
+    fn oast_saas_providers_default_public_servers_and_custom_requires_url() {
+        let postbin = OastConfig {
+            provider: Some(OastProviderKind::Postbin),
+            ..OastConfig::default()
+        };
+        assert!(postbin.is_enabled());
+        assert_eq!(postbin.effective_server(), "https://www.postb.in");
+
+        let webhook = OastConfig {
+            provider: Some(OastProviderKind::Webhooksite),
+            ..OastConfig::default()
+        };
+        assert!(webhook.is_enabled());
+        assert_eq!(webhook.effective_server(), "https://webhook.site");
+
+        let custom = OastConfig {
+            provider: Some(OastProviderKind::Custom),
+            ..OastConfig::default()
+        };
+        assert!(!custom.is_enabled());
+
+        let custom = OastConfig {
+            provider: Some(OastProviderKind::Custom),
+            server: "https://hooks.example.com/poll".into(),
+            ..OastConfig::default()
+        };
+        assert!(custom.is_enabled());
+        assert_eq!(custom.effective_server(), "https://hooks.example.com/poll");
+    }
+
+    #[test]
+    fn oast_rejects_non_http_servers_and_unknown_providers() {
+        let bad = OastConfig {
+            provider: Some(OastProviderKind::Interactsh),
+            server: "ftp://oast.example.com".into(),
+            domain: "oast.example.com".into(),
+            ..OastConfig::default()
+        };
+        assert!(bad.validate().is_err());
+        assert!(OastProviderKind::parse("collaborator").is_err());
+        assert_eq!(
+            OastProviderKind::parse("WebhookSite").unwrap(),
+            OastProviderKind::Webhooksite
+        );
     }
 }

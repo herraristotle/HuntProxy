@@ -447,6 +447,40 @@ pub struct FuzzJob {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum CrawlJobState {
+    Queued,
+    Running,
+    Paused,
+    Cancelling,
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlJob {
+    pub id: CrawlJobId,
+    pub project_id: ProjectId,
+    pub target_url: String,
+    pub host: String,
+    pub state: CrawlJobState,
+    pub depth: u32,
+    pub discovered_urls: u64,
+    pub crawled_urls: u64,
+    pub failed_urls: u64,
+    pub agent_count: u32,
+    pub title: Option<String>,
+    #[serde(with = "rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(with = "rfc3339::option")]
+    pub completed_at: Option<OffsetDateTime>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BrowserEngine {
     Chromium,
 }

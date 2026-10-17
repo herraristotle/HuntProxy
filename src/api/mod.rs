@@ -17,6 +17,7 @@ use axum::{Json, Router};
 use futures::stream::Stream;
 use futures::StreamExt;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -244,6 +245,28 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(cancel_flow_job),
         )
         .route(
+            "/api/v1/projects/{id}/oast",
+            get(list_oast_sessions)
+                .post(create_oast_session)
+                .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/projects/{id}/oast/{sid}/new_url",
+            post(oast_new_url).layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/projects/{id}/oast/{sid}/poll",
+            post(oast_poll),
+        )
+        .route(
+            "/api/v1/projects/{id}/oast/{sid}/interactions",
+            get(oast_interactions),
+        )
+        .route(
+            "/api/v1/projects/{id}/oast/{sid}/stop",
+            post(oast_stop),
+        )
+        .route(
             "/api/v1/projects/{id}/exchanges/compare",
             get(compare_exchanges),
         )
@@ -300,6 +323,37 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(fuzz_case_diff),
         )
         .route(
+            "/api/v1/projects/{id}/crawl-jobs",
+            get(list_crawl_jobs)
+                .post(start_crawl)
+                .layer(DefaultBodyLimit::max(payload_body_limit)),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/cancel",
+            post(cancel_crawl),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/pause",
+            post(pause_crawl),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/resume",
+            post(resume_crawl),
+        )
+        .route("/api/v1/projects/{id}/crawl-jobs/clear", post(clear_crawl_jobs))
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/title",
+            patch(rename_crawl),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}",
+            delete(delete_crawl),
+        )
+        .route(
+            "/api/v1/projects/{id}/fuzz-jobs/{jid}/oast/interactions",
+            get(fuzz_oast_interactions),
+        )
+        .route(
             "/api/v1/projects/{id}/websockets",
             get(list_websocket_connections),
         )
@@ -343,6 +397,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/doctor", get(doctor))
         .route("/api/v1/extensions", get(list_extensions))
         .route("/api/v1/extensions/{plugin_id}", get(describe_extension))
+        .route(
+            "/api/v1/oast-providers",
+            get(list_oast_providers).post(create_oast_provider),
+        )
+        .route(
+            "/api/v1/oast-providers/{pid}",
+            patch(update_oast_provider).delete(delete_oast_provider),
+        )
+        .route(
+            "/api/v1/oast-providers/{pid}/default",
+            post(set_oast_provider_default),
+        )
         .route(
             "/api/v1/projects/{id}/extension-jobs",
             post(run_extension).layer(DefaultBodyLimit::max(payload_body_limit)),
@@ -1455,6 +1521,149 @@ async fn flow_node_catalog() -> Response {
     Json(serde_json::json!({ "nodes": crate::flow::node_catalog() })).into_response()
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OastCreateBody {
+    purpose: Option<String>,
+    watch: Option<bool>,
+    provider_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OastNewUrlBody {
+    case_index: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct OastInteractionsQuery {
+    label: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn list_oast_sessions(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    match state.oast.list(id).await {
+        Ok(sessions) => Json(serde_json::json!({ "sessions": sessions })).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn create_oast_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<OastCreateBody>,
+) -> Response {
+    match state
+        .oast
+        .create(
+            id,
+            body.purpose,
+            body.watch.unwrap_or(true),
+            body.provider_id,
+        )
+        .await
+    {
+        Ok(session) => Json(session).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn oast_new_url(
+    State(state): State<Arc<AppState>>,
+    Path((id, sid)): Path<(i64, i64)>,
+    Json(body): Json<OastNewUrlBody>,
+) -> Response {
+    match state.oast.new_url(id, sid, body.case_index).await {
+        Ok(view) => Json(view).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn oast_poll(
+    State(state): State<Arc<AppState>>,
+    Path((id, sid)): Path<(i64, i64)>,
+) -> Response {
+    match state.oast.poll(id, sid).await {
+        Ok(interactions) => Json(serde_json::json!({ "interactions": interactions }))
+            .into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn oast_interactions(
+    State(state): State<Arc<AppState>>,
+    Path((id, sid)): Path<(i64, i64)>,
+    Query(query): Query<OastInteractionsQuery>,
+) -> Response {
+    match state
+        .oast
+        .interactions(id, sid, query.label, query.limit, query.offset)
+        .await
+    {
+        Ok(page) => Json(page).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn oast_stop(
+    State(state): State<Arc<AppState>>,
+    Path((id, sid)): Path<(i64, i64)>,
+) -> Response {
+    match state.oast.stop(id, sid).await {
+        Ok(session) => Json(session).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn list_oast_providers(State(state): State<Arc<AppState>>) -> Response {
+    match state.oast.list_providers().await {
+        Ok(providers) => Json(serde_json::json!({ "providers": providers })).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn create_oast_provider(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<crate::oast::OastProviderCreate>,
+) -> Response {
+    match state.oast.add_provider(body).await {
+        Ok(provider) => (StatusCode::CREATED, Json(provider)).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn update_oast_provider(
+    State(state): State<Arc<AppState>>,
+    Path(pid): Path<i64>,
+    Json(body): Json<crate::oast::OastProviderPatch>,
+) -> Response {
+    match state.oast.update_provider(pid, body).await {
+        Ok(provider) => Json(provider).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn delete_oast_provider(
+    State(state): State<Arc<AppState>>,
+    Path(pid): Path<i64>,
+) -> Response {
+    match state.oast.delete_provider(pid).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn set_oast_provider_default(
+    State(state): State<Arc<AppState>>,
+    Path(pid): Path<i64>,
+) -> Response {
+    match state.oast.set_provider_default(pid).await {
+        Ok(provider) => Json(provider).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
 async fn list_flows(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
     match state.db.list_flows(ProjectId(id)).await {
         Ok(flows) => Json(serde_json::json!({ "flows": flows })).into_response(),
@@ -2207,6 +2416,122 @@ async fn cancel_fuzz(
     }
 }
 
+async fn list_crawl_jobs(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    match state.crawl_jobs.list(ProjectId(id)).await {
+        Ok(jobs) => Json(serde_json::json!({ "jobs": jobs })).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn start_crawl(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<crate::crawler::StartCrawlRequest>,
+) -> Response {
+    match state.crawl_jobs.start(ProjectId(id), body).await {
+        Ok(job) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "crawl".into(),
+                payload: serde_json::json!({
+                    "event": "crawler_started",
+                    "job_id": job.id.get(),
+                    "state": job.state,
+                    "action": "started",
+                }),
+            });
+            (StatusCode::CREATED, Json(job)).into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+async fn cancel_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state
+        .crawl_jobs
+        .cancel_for_project(ProjectId(id), CrawlJobId(jid))
+        .await
+    {
+        Ok(()) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "crawl".into(),
+                payload: serde_json::json!({ "event": "crawler_aborted", "job_id": jid }),
+            });
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+async fn pause_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state.crawl_jobs.pause(ProjectId(id), CrawlJobId(jid)).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn resume_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state.crawl_jobs.resume(ProjectId(id), CrawlJobId(jid)).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn clear_crawl_jobs(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    match state.crawl_jobs.clear_completed(ProjectId(id)).await {
+        Ok(count) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "cleared": count })),
+        )
+            .into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct RenameCrawlBody {
+    title: Option<String>,
+}
+
+async fn rename_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+    Json(body): Json<RenameCrawlBody>,
+) -> Response {
+    match state
+        .crawl_jobs
+        .rename(ProjectId(id), CrawlJobId(jid), body.title)
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn delete_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state
+        .crawl_jobs
+        .delete(ProjectId(id), CrawlJobId(jid))
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
 #[derive(Deserialize)]
 struct FuzzCasesQuery {
     limit: Option<u32>,
@@ -2242,13 +2567,113 @@ async fn list_fuzz_cases(
             .await
     };
     match result {
-        Ok((cases, next)) => Json(serde_json::json!({
-            "cases": cases,
-            "next_before_case_index": next,
-        }))
-        .into_response(),
+        Ok((cases, next)) => {
+            // Mirror the MCP `fuzz_manage` "cases" action: cases of jobs
+            // started with an oast generator carry the job's session id and
+            // their exact correlation label, if minted.
+            let context =
+                match crate::oast::load_oast_job_context(&state, ProjectId(id), FuzzJobId(jid))
+                    .await
+                {
+                    Ok(context) => context,
+                    Err(error) => return error_response(error),
+                };
+            let cases = cases
+                .into_iter()
+                .map(|case| {
+                    let mut value =
+                        serde_json::to_value(&case).unwrap_or_else(|_| serde_json::json!({}));
+                    if let Some(context) = &context {
+                        value["oast_session_id"] = serde_json::json!(context.session_id);
+                        value["oast_label"] =
+                            serde_json::json!(context.labels.get(&case.case_index));
+                    }
+                    value
+                })
+                .collect::<Vec<_>>();
+            Json(serde_json::json!({
+                "cases": cases,
+                "next_before_case_index": next,
+            }))
+            .into_response()
+        }
         Err(error) => error_response(error),
     }
+}
+
+#[derive(Deserialize, Default)]
+struct FuzzOastInteractionsQuery {
+    limit: Option<i64>,
+}
+
+/// REST mirror of the MCP `fuzz_manage` `oast_poll` action: persist fresh
+/// interactions, then return the stored set grouped by case index using exact
+/// label correlation. Unmapped interactions arrive via shared-URL providers.
+async fn fuzz_oast_interactions(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+    Query(query): Query<FuzzOastInteractionsQuery>,
+) -> Response {
+    let context = match crate::oast::load_oast_job_context(&state, ProjectId(id), FuzzJobId(jid))
+        .await
+    {
+        Ok(Some(context)) => context,
+        Ok(None) => return error_response(DomainError::invalid("fuzz job has no oast session")),
+        Err(error) => return error_response(error),
+    };
+    // Persist fresh interactions first, then group the full stored set (the
+    // background poller may have seen some).
+    if let Err(error) = state.oast.poll(id, context.session_id).await {
+        return error_response(error);
+    }
+    let limit = query.limit.unwrap_or(500).clamp(1, 500);
+    let page = match state
+        .oast
+        .interactions(id, context.session_id, None, Some(limit), None)
+        .await
+    {
+        Ok(page) => page,
+        Err(error) => return error_response(error),
+    };
+    let mut by_case: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+    let mut unmapped: Vec<serde_json::Value> = Vec::new();
+    for hit in page.interactions {
+        let mut value = serde_json::json!(hit);
+        let full_id = value["full_id"].as_str().unwrap_or("").to_string();
+        let matched = context
+            .labels
+            .iter()
+            // Interactions persist a domain-normalized `full_id` equal to the
+            // minted label, so this is an exact correlation — prefix matching
+            // would let label `a1b2c3...` swallow a longer label sharing the
+            // same correlation prefix.
+            .find(|(_, label)| full_id == *label.as_str());
+        match matched {
+            Some((case_index, label)) => {
+                value["label"] = serde_json::json!(label);
+                value["case_index"] = serde_json::json!(case_index);
+                by_case
+                    .entry(case_index.to_string())
+                    .or_default()
+                    .push(value);
+            }
+            None => unmapped.push(value),
+        }
+    }
+    serde_json::json!({
+        "session_id": context.session_id,
+        "total": page.total,
+        "by_case": by_case,
+        "unmapped": unmapped,
+        "payload_url": context.payload_url,
+        "per_case_labels": context.per_case_labels,
+        "note": if context.per_case_labels {
+            serde_json::json!("interactsh mints one payload url per case")
+        } else {
+            serde_json::json!("single-URL provider: every case shares one payload url; interactions cannot be mapped to cases")
+        },
+    })
+    .into_response()
 }
 
 async fn list_fuzz_groups(

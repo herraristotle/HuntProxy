@@ -25,6 +25,7 @@ pub mod har;
 pub mod history;
 pub mod installation;
 pub mod mcp;
+pub mod oast;
 pub mod page_analyzer;
 pub mod page_title;
 pub mod plugins;

@@ -6,13 +6,14 @@ use crate::codec::{apply_pipeline, Transform};
 use crate::config::Config;
 use crate::domain::*;
 use crate::fuzzer::FuzzTemplate;
+use crate::oast::{load_oast_job_context, OastJobContext};
 use crate::history::{parse_text_query, query_error, HISTORY_QUERY_SYNTAX};
 use crate::policy::{is_sensitive_header, PresentationOptions};
 use crate::storage::CreateCaptureSession;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,6 +35,14 @@ trait ToolBackend: Send + Sync {
     fn supports_list_changed(&self) -> bool {
         false
     }
+
+    /// Whether `tools/list` should surface the `oast` tool. Defaults to true
+    /// for backends that cannot probe cheaply (the daemon bridges to the same
+    /// server, which rejects unconfigured calls with a clear configuration
+    /// error anyway).
+    async fn oast_listable(&self) -> bool {
+        true
+    }
 }
 
 struct LocalToolBackend {
@@ -47,7 +56,29 @@ impl ToolBackend for LocalToolBackend {
     }
 
     async fn definitions(&self) -> Value {
-        local_tool_defs()
+        // Surface the `oast` tool only when OAST is actually reachable
+        // (config seed or an enabled registry row) so clients never see an
+        // unusable tool.
+        if self.state.oast.listable().await {
+            local_tool_defs()
+        } else {
+            let defs = local_tool_defs();
+            Value::Array(
+                defs.as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter(|t| t["name"].as_str() != Some("oast"))
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            )
+        }
+    }
+
+    async fn oast_listable(&self) -> bool {
+        self.state.oast.listable().await
     }
 }
 
@@ -432,6 +463,15 @@ fn fuzz_template_schema() -> Value {
                             },
                             "required": ["type", "input"],
                             "additionalProperties": false
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "type": {"const": "oast"},
+                                "count": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615_u64, "description": "Payload slots for this job. Defaults to the longest existing wordlist (1 when oast is the only list). Requires the [oast] config; interactsh gives each case a distinct URL while single-URL providers share one URL across cases."}
+                            },
+                            "required": ["type"],
+                            "additionalProperties": false
                         }
                     ]
                 }
@@ -491,6 +531,8 @@ pub(crate) fn tool_defs() -> Value {
         {"name":"findings","description":"List findings, mark an exchange as a finding, or remove a finding.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","add","remove"]},"exchange_id":{"type":"integer","description":"Required for add."},"finding_id":{"type":"integer","description":"Required for remove."},"title":{"type":"string","description":"Required for add."},"description":{"type":"string","description":"Required for add."}},"required":["project_id","action"]}},
         {"name":"flows","description":"List, create, update, delete, enable, disable, run, import, and inspect project graph flows and their jobs. create/update take a definition: {edition,kind,name,description,graph:{nodes:[{type,alias,inputs}],edges:[{source:{node,port},target:{node,port}}]}}. import takes a raw Caido workflow definition (JSON object or string) and converts it one-way into the native format. run starts a manual run of an active flow and returns job_id; passive flows run automatically on recorded exchanges. job_get/job_cancel manage runs by job_id. Use flow_nodes for the node catalog.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","create","get","update","delete","enable","disable","run","import","jobs","job_get","job_cancel"]},"flow_id":{"type":"integer","description":"Required for get, update, delete, enable, disable, run."},"job_id":{"type":"string","format":"uuid","description":"Required for job_get and job_cancel."},"definition":{"type":"object","description":"Required for create, update, and import."},"enabled":{"type":"boolean","description":"Optional on update; enable/disable actions ignore this."},"input":{"type":"object","description":"Optional manual trigger input for run.","default":{}}},"required":["project_id","action"],"additionalProperties":false}},
         {"name":"flow_nodes","description":"List the flow node catalog: each node type with its display name, category, trigger role, inputs, outputs, and exec ports.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
+        {"name":"oast","description":"Create and manage out-of-band (OAST) interaction sessions for blind SSRF/XXE/deserialization detection: register a provider session, mint a per-case payload URL, poll for interactions, and read results keyed by case label. poll returns only newly seen interactions. Sessions resolve a provider from provider_id, the default registry row, the [oast] config seed, or the single enabled registry row; when none exist, actions return a clear configuration error (use oast_providers to add one).","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["create","new_url","list","poll","interactions","stop"]},"session_id":{"type":"integer","description":"Required for new_url, poll, interactions, and stop."},"purpose":{"type":"string","description":"Optional human label recorded on create."},"watch":{"type":"boolean","default":true,"description":"create: include the session in the background poller."},"provider_id":{"type":"integer","description":"create: select a specific registry row instead of the default resolution."},"case_index":{"type":"integer","description":"Optional fuzz case index recorded with the minted URL for later correlation."},"label":{"type":"string","description":"interactions: only return interactions whose label starts with this prefix."},"limit":{"type":"integer","minimum":1,"maximum":500},"offset":{"type":"integer","minimum":0}},"required":["project_id","action"],"additionalProperties":false}},
+        {"name":"oast_providers","description":"Manage the daemon-wide OAST provider registry (global, not project-scoped): the interactsh/postbin/webhooksite/custom endpoints that the oast tool registers sessions with. list/add/update/delete/set_default. Tokens are write-only — responses expose token_configured, never the value. add needs name, kind, and server; interactsh also needs domain. A session without provider_id resolves to the enabled default row, then the [oast] config seed, then the single enabled row.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","add","update","delete","set_default"]},"provider_id":{"type":"integer","description":"Required for update, delete, and set_default."},"name":{"type":"string","description":"add: unique registry name."},"kind":{"type":"string","enum":["interactsh","postbin","webhooksite","custom"],"description":"add: provider protocol."},"server":{"type":"string","description":"add: provider origin URL."},"domain":{"type":"string","description":"Payload domain (interactsh only; required for interactsh)."},"token":{"type":"string","description":"Auth token; empty string clears it on update."},"enabled":{"type":"boolean","description":"add: defaults to true. Disabling a default row clears its default flag."}},"required":["action"],"additionalProperties":false}},
         {"name":"exchange_get","description":"Get exchange detail (secrets redacted)","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer"}},"required":["project_id","exchange_id"]}},
         {"name":"exchange_compare","description":"Compare the saved request and response of two exchanges. Sensitive values stay redacted, while changes are still detected. Text body diffs are bounded.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"left_exchange_id":{"type":"integer"},"right_exchange_id":{"type":"integer"},"include_noisy_headers":{"type":"boolean","default":false}},"required":["project_id","left_exchange_id","right_exchange_id"],"additionalProperties":false}},
         {"name":"page_analyzer","description":"Extract sorted, unique endpoints, absolute URLs, emails, and request parameter names from JavaScript or HTML without executing it. Provide exactly one saved exchange_id or absolute URL. The tool analyzes that page and sequentially fetches bounded same-origin JavaScript bundles referenced by script tags or a Modern.js route manifest; URL mode first sends a semantic GET with project cookies. CSS and other non-JavaScript assets are skipped. Secrets are never scanned or returned.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer","description":"Saved exchange whose decoded response body and same-origin JavaScript bundles should be analyzed."},"url":{"type":"string","description":"Absolute http/https URL to fetch and analyze, including its same-origin JavaScript bundles."}},"required":["project_id"],"oneOf":[{"required":["exchange_id"]},{"required":["url"]}],"additionalProperties":false}},
@@ -501,7 +543,7 @@ pub(crate) fn tool_defs() -> Value {
         {"name":"reply_send","description":"Send a semantic HTTP request and return status plus a decoded 4 KiB response preview. For the full captured response, pass the returned exchange_id to exchange_body with side=response; use its next_offset for further pages. Put request fields under draft (for example draft.url and draft.method); omitted draft fields use safe defaults or inherit from base_exchange_id. upstream_proxy is a transient http://, socks5://, or socks5h:// override.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"tab_id":{"type":"integer"},"base_exchange_id":{"type":"integer"},"draft":reply_draft_schema(),"protocol":{"type":"string","enum":["auto","h1","h2"]},"upstream_proxy":{"type":"string"}},"required":["project_id"],"additionalProperties":false}},
         {"name":"reply_send_raw","description":"Send exact raw HTTP/1.1 bytes, optionally through an upstream proxy, split-writing at one byte offset, reading an early response before same-socket continuation, half-closing the write side, and collecting multiple responses until idle. Use base64 whenever byte offsets or non-UTF-8 bytes matter. This does not provide malformed HTTP/2 framing.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"target_url":{"type":"string"},"request":{"type":"string"},"encoding":{"type":"string","enum":["utf8","base64"]},"tab_id":{"type":"integer"},"use_project_cookies":{"type":"boolean"},"upstream_proxy":{"type":"string","description":"Transient http://, socks5://, or socks5h:// proxy override."},"pause_at_byte":{"type":"integer","minimum":1,"description":"Split the exact decoded request at this byte offset."},"pause_ms":{"type":"integer","minimum":1,"maximum":120000},"await_response_before_continue":{"type":"boolean","default":false,"description":"Read one early response while the split request is incomplete, then continue on the same connection."},"half_close_write":{"type":"boolean","default":false},"response_mode":{"type":"string","enum":["auto","until_idle","until_close"],"default":"auto"},"read_timeout_ms":{"type":"integer","minimum":1,"maximum":120000,"default":60000},"idle_timeout_ms":{"type":"integer","minimum":1,"maximum":10000,"default":1000}},"required":["project_id","target_url","request"]}},
         {"name":"fuzz_start","description":"Start a bounded fuzz job. Put §name§ markers in draft.url, a header override, or body_override; use the same name in insertion_points. Payloads may be inline wordlists, local UTF-8 wordlist_files, inclusive number ranges, or native Recollapse-style regex bypass generators.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"template":fuzz_template_schema(),"confirm_large":{"type":"boolean","default":false}},"required":["project_id","template"]}},
-        {"name":"fuzz_manage","description":"List, inspect, cancel, group, diff, or page through fuzz jobs and cases. Case results include their saved exchange_id; use exchange_body to read the full response without replaying it. Continue case pages with next_before_case_index.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","get","cancel","cases","groups","group_cases","diff"]},"job_id":{"type":"integer"},"case_id":{"type":"integer"},"baseline_case_id":{"type":"integer"},"group_id":{"type":"string"},"include_text":{"type":"boolean","default":false},"limit":{"type":"integer","minimum":1,"maximum":500},"before_case_index":{"type":"integer","minimum":0}},"required":["project_id","action"],"additionalProperties":false}},
+        {"name":"fuzz_manage","description":"List, inspect, cancel, group, diff, or page through fuzz jobs and cases. Case results include their saved exchange_id; use exchange_body to read the full response without replaying it. Continue case pages with next_before_case_index. Jobs started with an oast generator expose oast_session_id/oast_label on cases; action oast_poll polls the job's oast session and returns stored interactions grouped by case_index (unmapped collects shared-URL-provider interactions).","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","get","cancel","cases","groups","group_cases","diff","oast_poll"]},"job_id":{"type":"integer"},"case_id":{"type":"integer"},"baseline_case_id":{"type":"integer"},"group_id":{"type":"string"},"include_text":{"type":"boolean","default":false},"limit":{"type":"integer","minimum":1,"maximum":500},"before_case_index":{"type":"integer","minimum":0}},"required":["project_id","action"],"additionalProperties":false}},
         {"name":"websocket_manage","description":"List intercepted WebSocket connections and messages, or inject a text/binary message into an active connection.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","messages","send"]},"connection_id":{"type":"integer"},"after_id":{"type":"integer"},"limit":{"type":"integer","minimum":1,"maximum":1000},"direction":{"type":"string","enum":["to_server","to_client"]},"encoding":{"type":"string","enum":["text","base64"],"default":"text"},"payload":{"type":"string"}},"required":["project_id","action"],"additionalProperties":false}},
         {"name":"browser_profiles","description":"List, create, or delete named persistent Chromium identities for a project. default always exists and cannot be deleted. Deleting a named profile requires it to be stopped first.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","create","delete"]},"profile":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$","description":"Required for create and delete."}},"required":["project_id","action"],"additionalProperties":false}},
         {"name":"browser_start","description":"Start or resume a persistent Chromium identity. profile defaults to default; different profiles can stay open simultaneously and each returns its own session_id. Omitting cookie_profile preserves the browser jar without injecting project or named cookies. Pass a matching cookie_profile created by cookies(profile_name=...) to seed its cookie jar. Repeated unchanged seeds preserve newer browser cookies; use refresh_cookies=true to explicitly reimport. An active matching profile is resumed without relaunching. Omit url to resume the selected profile's last page.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"profile":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$","default":"default"},"cookie_profile":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$","description":"Must match profile. Seeds new or changed cookies; unchanged seeds are not reimported unless refresh_cookies=true."},"refresh_cookies":{"type":"boolean","default":false,"description":"Explicitly reimport the matching cookie_profile into this browser profile only."},"url":{"type":"string","default":"about:blank","description":"Optional page to open. Omit to resume the selected profile's last page."}},"required":["project_id"],"additionalProperties":false}},
@@ -1776,6 +1818,106 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
             }
         }
         "flow_nodes" => Ok(json!({ "nodes": crate::flow::node_catalog() })),
+        "oast" => {
+            let project_id = require_project_id(&args)?.0;
+            let action = args.get("action").and_then(Value::as_str).unwrap_or("list");
+            match action {
+                "create" => {
+                    let purpose =
+                        args.get("purpose").and_then(Value::as_str).map(str::to_string);
+                    let watch = args.get("watch").and_then(Value::as_bool).unwrap_or(true);
+                    let provider_id = args.get("provider_id").and_then(Value::as_i64);
+                    Ok(json!(
+                        state
+                            .oast
+                            .create(project_id, purpose, watch, provider_id)
+                            .await?
+                    ))
+                }
+                "new_url" => {
+                    let session_id = args
+                        .get("session_id")
+                        .and_then(Value::as_i64)
+                        .ok_or_else(|| DomainError::invalid("session_id required"))?;
+                    let case_index = args.get("case_index").and_then(Value::as_i64);
+                    Ok(json!(state.oast.new_url(project_id, session_id, case_index).await?))
+                }
+                "list" => Ok(json!({ "sessions": state.oast.list(project_id).await? })),
+                "poll" => {
+                    let session_id = args
+                        .get("session_id")
+                        .and_then(Value::as_i64)
+                        .ok_or_else(|| DomainError::invalid("session_id required"))?;
+                    Ok(json!({
+                        "interactions": state.oast.poll(project_id, session_id).await?
+                    }))
+                }
+                "interactions" => {
+                    let session_id = args
+                        .get("session_id")
+                        .and_then(Value::as_i64)
+                        .ok_or_else(|| DomainError::invalid("session_id required"))?;
+                    let label =
+                        args.get("label").and_then(Value::as_str).map(str::to_string);
+                    let limit = args.get("limit").and_then(Value::as_i64);
+                    let offset = args.get("offset").and_then(Value::as_i64);
+                    Ok(json!(
+                        state
+                            .oast
+                            .interactions(project_id, session_id, label, limit, offset)
+                            .await?
+                    ))
+                }
+                "stop" => {
+                    let session_id = args
+                        .get("session_id")
+                        .and_then(Value::as_i64)
+                        .ok_or_else(|| DomainError::invalid("session_id required"))?;
+                    Ok(json!(state.oast.stop(project_id, session_id).await?))
+                }
+                other => Err(DomainError::invalid(format!(
+                    "unknown oast action `{other}`"
+                ))),
+            }
+        }
+        "oast_providers" => {
+            let action = args.get("action").and_then(Value::as_str).unwrap_or("list");
+            match action {
+                "list" => Ok(json!({ "providers": state.oast.list_providers().await? })),
+                "add" => {
+                    let body: crate::oast::OastProviderCreate = serde_json::from_value(args)
+                        .map_err(|e| DomainError::invalid(format!("oast_providers add: {e}")))?;
+                    Ok(json!(state.oast.add_provider(body).await?))
+                }
+                "update" => {
+                    let provider_id = args
+                        .get("provider_id")
+                        .and_then(Value::as_i64)
+                        .ok_or_else(|| DomainError::invalid("provider_id required"))?;
+                    let body: crate::oast::OastProviderPatch = serde_json::from_value(args)
+                        .map_err(|e| DomainError::invalid(format!("oast_providers update: {e}")))?;
+                    Ok(json!(state.oast.update_provider(provider_id, body).await?))
+                }
+                "delete" => {
+                    let provider_id = args
+                        .get("provider_id")
+                        .and_then(Value::as_i64)
+                        .ok_or_else(|| DomainError::invalid("provider_id required"))?;
+                    state.oast.delete_provider(provider_id).await?;
+                    Ok(json!({ "deleted": true, "provider_id": provider_id }))
+                }
+                "set_default" => {
+                    let provider_id = args
+                        .get("provider_id")
+                        .and_then(Value::as_i64)
+                        .ok_or_else(|| DomainError::invalid("provider_id required"))?;
+                    Ok(json!(state.oast.set_provider_default(provider_id).await?))
+                }
+                other => Err(DomainError::invalid(format!(
+                    "unknown oast_providers action `{other}`"
+                ))),
+            }
+        }
         "exchange_get" => {
             let project_id = require_project_id(&args)?;
             let eid = args
@@ -2377,7 +2519,23 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         .get("job_id")
                         .and_then(|v| v.as_i64())
                         .ok_or_else(|| DomainError::invalid("job_id required"))?;
-                    Ok(json!(state.fuzzer.get(project_id, FuzzJobId(jid)).await?))
+                    let mut job =
+                        json!(state.fuzzer.get(project_id, FuzzJobId(jid)).await?);
+                    if let Some(context) =
+                        load_oast_job_context(&state, project_id, FuzzJobId(jid)).await?
+                    {
+                        job["oast"] = json!({
+                            "session_id": context.session_id,
+                            "per_case_labels": context.per_case_labels,
+                            "payload_url": context.payload_url,
+                            "note": if context.per_case_labels {
+                                json!("interactsh mints one payload url per case")
+                            } else {
+                                json!("single-URL provider: every case shares one payload url; interactions cannot be mapped to cases")
+                            },
+                        });
+                    }
+                    Ok(job)
                 }
                 "cases" => {
                     let jid = args
@@ -2396,6 +2554,21 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         .fuzzer
                         .list_cases(project_id, FuzzJobId(jid), limit, before)
                         .await?;
+                    let context =
+                        load_oast_job_context(&state, project_id, FuzzJobId(jid)).await?;
+                    let cases = cases
+                        .into_iter()
+                        .map(|case| {
+                            let mut value =
+                                serde_json::to_value(&case).unwrap_or_else(|_| json!({}));
+                            if let Some(context) = &context {
+                                value["oast_session_id"] = json!(context.session_id);
+                                value["oast_label"] =
+                                    json!(context.labels.get(&case.case_index));
+                            }
+                            value
+                        })
+                        .collect::<Vec<_>>();
                     Ok(json!({ "cases": cases, "next_before_case_index": next }))
                 }
                 "groups" => {
@@ -2458,8 +2631,73 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                             .await?
                     ))
                 }
+                "oast_poll" => {
+                    let jid = args
+                        .get("job_id")
+                        .and_then(Value::as_i64)
+                        .ok_or_else(|| DomainError::invalid("job_id required"))?;
+                    let context =
+                        load_oast_job_context(&state, project_id, FuzzJobId(jid))
+                            .await?
+                            .ok_or_else(|| {
+                                DomainError::invalid("fuzz job has no oast session")
+                            })?;
+                    // Persist fresh interactions first, then group the full
+                    // stored set (the background poller may have seen some).
+                    state.oast.poll(project_id.get(), context.session_id).await?;
+                    let limit = args.get("limit").and_then(Value::as_i64).unwrap_or(500);
+                    let page = state
+                        .oast
+                        .interactions(
+                            project_id.get(),
+                            context.session_id,
+                            None,
+                            Some(limit),
+                            None,
+                        )
+                        .await?;
+                    let mut by_case: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+                    let mut unmapped: Vec<Value> = Vec::new();
+                    for hit in page.interactions {
+                        let mut value = json!(hit);
+                        let full_id = value["full_id"].as_str().unwrap_or("").to_string();
+                        let matched = context
+                            .labels
+                            .iter()
+                            // Interactions persist a domain-normalized
+                            // `full_id` equal to the minted label, so this is
+                            // an exact correlation — prefix matching would
+                            // let label `a1b2c3...` swallow a longer label
+                            // that shares the same correlation prefix.
+                            .find(|(_, label)| full_id == *label.as_str());
+                        match matched {
+                            Some((case_index, label)) => {
+                                value["label"] = json!(label);
+                                value["case_index"] = json!(case_index);
+                                by_case
+                                    .entry(case_index.to_string())
+                                    .or_default()
+                                    .push(value);
+                            }
+                            None => unmapped.push(value),
+                        }
+                    }
+                    Ok(json!({
+                        "session_id": context.session_id,
+                        "total": page.total,
+                        "by_case": by_case,
+                        "unmapped": unmapped,
+                        "payload_url": context.payload_url,
+                        "per_case_labels": context.per_case_labels,
+                        "note": if context.per_case_labels {
+                            json!("interactsh mints one payload url per case")
+                        } else {
+                            json!("single-URL provider: every case shares one payload url; interactions cannot be mapped to cases")
+                        },
+                    }))
+                }
                 _ => Err(DomainError::invalid(
-                    "action must be list|cancel|get|cases|groups|group_cases|diff",
+                    "action must be list|cancel|get|cases|groups|group_cases|diff|oast_poll",
                 )),
             }
         }

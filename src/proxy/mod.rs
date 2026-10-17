@@ -1125,7 +1125,14 @@ mod tests {
             placeholder_key: key.clone(),
             upstream_proxies: Default::default(),
         });
-        let fuzzer = Arc::new(FuzzerService::new(db.clone(), reply.clone(), key));
+        let oast = crate::oast::OastService::new(db.clone(), config.oast.clone()).unwrap();
+        oast.start_poller().await;
+        let fuzzer = Arc::new(FuzzerService::new(
+            db.clone(),
+            reply.clone(),
+            oast.clone(),
+            key,
+        ));
         let browser = Arc::new(BrowserService::new_with_proxy_and_ca(
             db.clone(),
             None,
@@ -1139,6 +1146,11 @@ mod tests {
             db.clone(),
             reply.clone(),
             browser.clone(),
+            events.clone(),
+        ));
+        let crawl_jobs = Arc::new(crate::crawler::CrawlJobManager::new(
+            db.clone(),
+            reply.clone(),
             events.clone(),
         ));
         let plugins = Arc::new(
@@ -1165,9 +1177,11 @@ mod tests {
             fuzzer,
             browser,
             crawler,
+            crawl_jobs,
             plugins,
             websocket: Arc::new(crate::websocket::WebSocketService::new()),
             flows,
+            oast,
             events,
             shutdown,
             activity: crate::app::ActivityTracker::new(),
