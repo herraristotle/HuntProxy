@@ -322,6 +322,33 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(fuzz_case_diff),
         )
         .route(
+            "/api/v1/projects/{id}/crawl-jobs",
+            get(list_crawl_jobs)
+                .post(start_crawl)
+                .layer(DefaultBodyLimit::max(payload_body_limit)),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/cancel",
+            post(cancel_crawl),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/pause",
+            post(pause_crawl),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/resume",
+            post(resume_crawl),
+        )
+        .route("/api/v1/projects/{id}/crawl-jobs/clear", post(clear_crawl_jobs))
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/title",
+            patch(rename_crawl),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}",
+            delete(delete_crawl),
+        )
+        .route(
             "/api/v1/projects/{id}/websockets",
             get(list_websocket_connections),
         )
@@ -2378,6 +2405,122 @@ async fn cancel_fuzz(
             });
             StatusCode::NO_CONTENT.into_response()
         }
+        Err(e) => error_response(e),
+    }
+}
+
+async fn list_crawl_jobs(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    match state.crawl_jobs.list(ProjectId(id)).await {
+        Ok(jobs) => Json(serde_json::json!({ "jobs": jobs })).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn start_crawl(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<crate::crawler::StartCrawlRequest>,
+) -> Response {
+    match state.crawl_jobs.start(ProjectId(id), body).await {
+        Ok(job) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "crawl".into(),
+                payload: serde_json::json!({
+                    "event": "crawler_started",
+                    "job_id": job.id.get(),
+                    "state": job.state,
+                    "action": "started",
+                }),
+            });
+            (StatusCode::CREATED, Json(job)).into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+async fn cancel_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state
+        .crawl_jobs
+        .cancel_for_project(ProjectId(id), CrawlJobId(jid))
+        .await
+    {
+        Ok(()) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "crawl".into(),
+                payload: serde_json::json!({ "event": "crawler_aborted", "job_id": jid }),
+            });
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+async fn pause_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state.crawl_jobs.pause(ProjectId(id), CrawlJobId(jid)).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn resume_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state.crawl_jobs.resume(ProjectId(id), CrawlJobId(jid)).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn clear_crawl_jobs(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    match state.crawl_jobs.clear_completed(ProjectId(id)).await {
+        Ok(count) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "cleared": count })),
+        )
+            .into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct RenameCrawlBody {
+    title: Option<String>,
+}
+
+async fn rename_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+    Json(body): Json<RenameCrawlBody>,
+) -> Response {
+    match state
+        .crawl_jobs
+        .rename(ProjectId(id), CrawlJobId(jid), body.title)
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn delete_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state
+        .crawl_jobs
+        .delete(ProjectId(id), CrawlJobId(jid))
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => error_response(e),
     }
 }
