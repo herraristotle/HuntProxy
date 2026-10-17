@@ -5,6 +5,7 @@ mod audit;
 mod bodies;
 mod browser_store;
 mod cookies;
+mod crawl_store;
 mod db;
 mod exchanges;
 mod findings;
@@ -13,6 +14,7 @@ mod fuzz_store;
 mod ip_rotation;
 mod lifecycle;
 mod migrations;
+mod oast;
 mod projects;
 mod reply_store;
 mod sessions;
@@ -36,6 +38,8 @@ pub use browser_store::*;
 #[allow(unused_imports)]
 pub use cookies::*;
 #[allow(unused_imports)]
+pub use crawl_store::*;
+#[allow(unused_imports)]
 pub use findings::*;
 #[allow(unused_imports)]
 pub use flows::*;
@@ -43,6 +47,8 @@ pub use flows::*;
 pub use fuzz_store::*;
 #[allow(unused_imports)]
 pub use ip_rotation::*;
+#[allow(unused_imports)]
+pub use oast::*;
 #[allow(unused_imports)]
 pub use reply_store::*;
 #[allow(unused_imports)]

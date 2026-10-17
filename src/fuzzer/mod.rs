@@ -2,6 +2,7 @@
 
 use crate::codec::{apply_pipeline, decode_content_encodings};
 use crate::domain::*;
+use crate::oast::OastService;
 use crate::policy::PresentationOptions;
 use crate::reply::{PlaceholderKey, ReplySendContext, ReplyService};
 use crate::storage::Db;
@@ -18,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 mod generators;
 
-pub use generators::PayloadGenerator;
+pub use generators::{PayloadGenerator, OAST_PLACEHOLDER};
 
 pub const MAX_FUZZ_DIFF_TEXT_BYTES: usize = 64 * 1024;
 
@@ -110,6 +111,17 @@ pub struct FuzzTemplate {
     pub transforms: Vec<crate::codec::Transform>,
     #[serde(default = "default_fuzz_strategy")]
     pub strategy: FuzzStrategy,
+    /// OAST session owned by this job (server-assigned; sanitized off
+    /// incoming templates in `FuzzerService::start`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oast_session_id: Option<i64>,
+    /// Session payload URL (all providers). Single-URL providers share it
+    /// across every case; interactsh mints fresh labels instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oast_payload_url: Option<String>,
+    /// True when the configured provider mints one URL per case (interactsh).
+    #[serde(default)]
+    pub oast_per_case_labels: bool,
 }
 
 fn default_fuzz_strategy() -> FuzzStrategy {
@@ -259,6 +271,7 @@ impl Iterator for CaseIterator {
 pub struct FuzzerService {
     pub db: Arc<Db>,
     pub reply: Arc<ReplyService>,
+    pub oast: Arc<OastService>,
     pub placeholder_key: PlaceholderKey,
     pub cancel_flags: Arc<dashmap::DashMap<i64, CancellationToken>>,
     project_limiters: Arc<dashmap::DashMap<i64, Arc<ProjectFuzzLimiter>>>,
@@ -317,10 +330,16 @@ impl ProjectFuzzLimiter {
 }
 
 impl FuzzerService {
-    pub fn new(db: Arc<Db>, reply: Arc<ReplyService>, placeholder_key: PlaceholderKey) -> Self {
+    pub fn new(
+        db: Arc<Db>,
+        reply: Arc<ReplyService>,
+        oast: Arc<OastService>,
+        placeholder_key: PlaceholderKey,
+    ) -> Self {
         Self {
             db,
             reply,
+            oast,
             placeholder_key,
             cancel_flags: Arc::new(dashmap::DashMap::new()),
             project_limiters: Arc::new(dashmap::DashMap::new()),
@@ -350,6 +369,11 @@ impl FuzzerService {
         confirm_large: bool,
     ) -> DomainResult<FuzzJob> {
         let project = self.db.get_project(project_id).await?;
+        // OAST session fields are server-assigned; strip anything the caller
+        // put on the template before any use of it.
+        template.oast_session_id = None;
+        template.oast_payload_url = None;
+        template.oast_per_case_labels = false;
         load_wordlist_files(&mut template).await?;
         generators::expand_generators(&mut template, project.limits.max_fuzz_cases)?;
         validate_template(&template)?;
@@ -392,6 +416,20 @@ impl FuzzerService {
             .map(Arc::new);
         let limiter = self.project_limiter(&project)?;
 
+        if template
+            .payload_generators
+            .iter()
+            .any(|generator| matches!(generator, PayloadGenerator::Oast { .. }))
+        {
+            let session = self
+                .oast
+                .create(project_id.get(), Some("fuzz".into()), true, None)
+                .await?;
+            template.oast_per_case_labels = session.provider == "interactsh";
+            template.oast_payload_url = session.payload_url;
+            template.oast_session_id = Some(session.session_id);
+        }
+
         let template_json = serde_json::to_string(&template)
             .map_err(|error| DomainError::new(ErrorCode::InvalidArgument, error.to_string()))?;
         let job = self
@@ -414,6 +452,7 @@ impl FuzzerService {
         self.cancel_flags.insert(job.id.get(), cancel.clone());
         let db = self.db.clone();
         let reply = self.reply.clone();
+        let oast = self.oast.clone();
         let cancel_flags = self.cancel_flags.clone();
         let job_id = job.id;
         let max_concurrency = project.limits.max_concurrent_requests.max(1) as usize;
@@ -421,6 +460,7 @@ impl FuzzerService {
             let result = run_job(
                 db.clone(),
                 reply,
+                oast,
                 project_id,
                 job_id,
                 template,
@@ -951,6 +991,7 @@ async fn load_wordlist_files(template: &mut FuzzTemplate) -> DomainResult<()> {
 async fn run_job(
     db: Arc<Db>,
     reply: Arc<ReplyService>,
+    oast: Arc<OastService>,
     project_id: ProjectId,
     job_id: FuzzJobId,
     template: FuzzTemplate,
@@ -982,13 +1023,14 @@ async fn run_job(
             };
             let db = db.clone();
             let reply = reply.clone();
+            let oast = oast.clone();
             let template = template.clone();
             let limiter = limiter.clone();
             let cancel = cancel.clone();
             let identity = identity.clone();
             running.push(tokio::spawn(async move {
                 execute_case(
-                    db, reply, project_id, job_id, template, case, limiter, cancel, identity,
+                    db, reply, oast, project_id, job_id, template, case, limiter, cancel, identity,
                 )
                 .await
             }));
@@ -1053,6 +1095,7 @@ fn share_execution_template(mut template: FuzzTemplate) -> (Arc<FuzzTemplate>, V
 async fn execute_case(
     db: Arc<Db>,
     reply: Arc<ReplyService>,
+    oast: Arc<OastService>,
     project_id: ProjectId,
     job_id: FuzzJobId,
     template: Arc<FuzzTemplate>,
@@ -1061,6 +1104,43 @@ async fn execute_case(
     cancel: CancellationToken,
     identity: Option<Arc<crate::cookies::StoredCookieProfile>>,
 ) -> DomainResult<()> {
+    let mut case = case;
+    if let Some(session_id) = template.oast_session_id {
+        let url = if template.oast_per_case_labels {
+            oast.new_url(project_id.get(), session_id, Some(case.index as i64))
+                .await?
+                .payload_url
+        } else {
+            template
+                .oast_payload_url
+                .clone()
+                .ok_or_else(|| {
+                    DomainError::new(
+                        ErrorCode::Internal,
+                        "oast fuzz template is missing its payload url",
+                    )
+                })?
+        };
+        for slot in &mut case.values {
+            if slot.as_deref() == Some(OAST_PLACEHOLDER) {
+                *slot = Some(url.clone());
+            }
+        }
+    }
+    // Never transmit the literal placeholder: a leftover OAST placeholder
+    // means substitution failed (or a template declares the placeholder
+    // without an oast generator). Fail the case loudly instead of leaking
+    // the placeholder into live traffic.
+    if case
+        .values
+        .iter()
+        .any(|slot| slot.as_deref() == Some(OAST_PLACEHOLDER))
+    {
+        return Err(DomainError::new(
+            ErrorCode::Internal,
+            "oast placeholder was not substituted; refusing to transmit it",
+        ));
+    }
     let mut prepared = prepare_case(&template, &case);
     let payloads = match &mut prepared {
         Ok(prepared) => std::mem::take(&mut prepared.payloads),
@@ -1655,6 +1735,9 @@ mod tests {
             payload_generators: vec![],
             transforms: vec![Transform::HexEncode],
             strategy: FuzzStrategy::Pitchfork,
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
         };
         let case = CaseIterator::new(
             template.strategy,
@@ -1708,6 +1791,9 @@ mod tests {
             payload_generators: vec![],
             transforms: vec![],
             strategy: FuzzStrategy::Sniper,
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
         };
 
         load_wordlist_files(&mut template).await.unwrap();
@@ -1733,6 +1819,9 @@ mod tests {
             payload_generators: vec![],
             transforms: vec![],
             strategy: FuzzStrategy::Sniper,
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
         };
         let case = CaseIterator::new(
             template.strategy,
@@ -1824,10 +1913,235 @@ mod tests {
             placeholder_key: PlaceholderKey::from_bytes(vec![5; 32]),
             upstream_proxies: Default::default(),
         });
-        let service = FuzzerService::new(db, reply, PlaceholderKey::from_bytes(vec![6; 32]));
+        let oast = crate::oast::OastService::new(
+            db.clone(),
+            crate::config::OastConfig::default(),
+        )
+        .unwrap();
+        let service =
+            FuzzerService::new(db, reply, oast, PlaceholderKey::from_bytes(vec![6; 32]));
         let first = service.project_limiter(&project).unwrap();
         let second = service.project_limiter(&project).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    fn oast_fuzz_template(generators: Vec<PayloadGenerator>) -> FuzzTemplate {
+        let mut template: FuzzTemplate = serde_json::from_value(serde_json::json!({
+            "draft": {"url": "https://target.test/?q=§q§"},
+            "insertion_points": [{"name": "q", "location": "url"}]
+        }))
+        .unwrap();
+        template.payload_generators = generators;
+        template
+    }
+
+    async fn wait_for_terminal_job(db: &Arc<Db>, project: ProjectId, job: FuzzJobId) -> FuzzJob {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let job = db.get_fuzz_job(project, job).await.unwrap();
+                if matches!(
+                    job.state,
+                    FuzzJobState::Completed | FuzzJobState::Failed | FuzzJobState::Interrupted
+                ) {
+                    return job;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("fuzz job did not reach a terminal state")
+    }
+
+    async fn oast_fixture_db(name: &str) -> (Arc<Db>, ProjectId) {
+        let db = Arc::new(Db::open_in_memory().await.unwrap());
+        let project = db
+            .create_project(CreateProjectRequest {
+                name: name.into(),
+                target_url: "http://127.0.0.1:9/".into(),
+                advanced: None,
+            })
+            .await
+            .unwrap();
+        (db, project.id)
+    }
+
+    fn fixture_reply(db: &Arc<Db>) -> Arc<ReplyService> {
+        Arc::new(ReplyService {
+            db: db.clone(),
+            transport: Arc::new(FailingTransport),
+            placeholder_key: PlaceholderKey::from_bytes(vec![7; 32]),
+            upstream_proxies: Default::default(),
+        })
+    }
+
+    #[tokio::test]
+    async fn oast_generator_registers_one_session_and_labels_each_case() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/register"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (db, project) = oast_fixture_db("oast interactsh fuzz").await;
+        let oast = crate::oast::OastService::new(
+            db.clone(),
+            crate::config::OastConfig {
+                provider: Some(crate::config::OastProviderKind::Interactsh),
+                server: server.uri(),
+                domain: "oast.example.com".into(),
+                auto_poll: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let service = FuzzerService::new(
+            db.clone(),
+            fixture_reply(&db),
+            oast,
+            PlaceholderKey::from_bytes(vec![6; 32]),
+        );
+        let template = oast_fuzz_template(vec![PayloadGenerator::Oast { count: Some(2) }]);
+        let job = service.start(project, template, false).await.unwrap();
+        // Every case send fails against FailingTransport; the case rows and
+        // their substituted payloads are persisted before dispatch.
+        wait_for_terminal_job(&db, project, job.id).await;
+
+        let raw = db.load_fuzz_template_for_project(project, job.id).await.unwrap();
+        let stored: FuzzTemplate = serde_json::from_str(&raw).unwrap();
+        let session_id = stored.oast_session_id.expect("session recorded on job");
+        assert!(stored.oast_per_case_labels);
+        assert!(stored
+            .oast_payload_url
+            .as_deref()
+            .is_some_and(|url| url.ends_with(".oast.example.com")));
+
+        // One synthetic label at register plus one minted label per case.
+        let map = db
+            .list_oast_label_case_map(project.get(), session_id)
+            .await
+            .unwrap();
+        assert_eq!(map.len(), 3);
+        let mut case_indices: Vec<Option<i64>> = map.iter().map(|(_, index)| *index).collect();
+        case_indices.sort();
+        assert_eq!(case_indices, vec![None, Some(0), Some(1)]);
+
+        let (cases, _) = service.list_cases(project, job.id, 10, None).await.unwrap();
+        assert_eq!(cases.len(), 2);
+        let first = cases[0].payloads[0].value.as_str();
+        let second = cases[1].payloads[0].value.as_str();
+        assert_ne!(first, second);
+        assert!(first.contains("oast.example.com"));
+        assert!(second.contains("oast.example.com"));
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn oast_generator_shares_one_url_for_single_url_providers() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/bin"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "binId": "bin-9"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (db, project) = oast_fixture_db("oast postbin fuzz").await;
+        let oast = crate::oast::OastService::new(
+            db.clone(),
+            crate::config::OastConfig {
+                provider: Some(crate::config::OastProviderKind::Postbin),
+                server: server.uri(),
+                auto_poll: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let service = FuzzerService::new(
+            db.clone(),
+            fixture_reply(&db),
+            oast,
+            PlaceholderKey::from_bytes(vec![6; 32]),
+        );
+        let template = oast_fuzz_template(vec![PayloadGenerator::Oast { count: Some(2) }]);
+        let job = service.start(project, template, false).await.unwrap();
+        wait_for_terminal_job(&db, project, job.id).await;
+
+        let raw = db.load_fuzz_template_for_project(project, job.id).await.unwrap();
+        let stored: FuzzTemplate = serde_json::from_str(&raw).unwrap();
+        let session_id = stored.oast_session_id.expect("session recorded on job");
+        assert!(!stored.oast_per_case_labels);
+        let shared = stored.oast_payload_url.expect("shared url recorded");
+        assert!(shared.ends_with("/bin-9"));
+
+        // Single-URL providers keep exactly the synthetic register label.
+        let map = db
+            .list_oast_label_case_map(project.get(), session_id)
+            .await
+            .unwrap();
+        assert_eq!(map, vec![("bin-9".to_string(), None)]);
+
+        let (cases, _) = service.list_cases(project, job.id, 10, None).await.unwrap();
+        assert_eq!(cases.len(), 2);
+        for case in &cases {
+            assert!(case.payloads[0].value.contains("bin-9"));
+        }
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn oast_session_fields_are_stripped_from_incoming_templates() {
+        let (db, project) = oast_fixture_db("oast sanitize").await;
+        let oast = crate::oast::OastService::new(db.clone(), crate::config::OastConfig::default())
+            .unwrap();
+        let service = FuzzerService::new(
+            db.clone(),
+            fixture_reply(&db),
+            oast,
+            PlaceholderKey::from_bytes(vec![6; 32]),
+        );
+        let mut template = oast_fuzz_template(vec![]);
+        template.wordlists = vec![vec!["payload".into()]];
+        template.oast_session_id = Some(999);
+        template.oast_payload_url = Some("https://attacker.invalid/steal".into());
+        template.oast_per_case_labels = true;
+        let job = service.start(project, template, false).await.unwrap();
+        wait_for_terminal_job(&db, project, job.id).await;
+
+        let raw = db.load_fuzz_template_for_project(project, job.id).await.unwrap();
+        assert!(!raw.contains("oast_session_id"));
+        assert!(!raw.contains("attacker.invalid"));
+        let stored: FuzzTemplate = serde_json::from_str(&raw).unwrap();
+        assert_eq!(stored.oast_session_id, None);
+        assert_eq!(stored.oast_payload_url, None);
+        assert!(!stored.oast_per_case_labels);
+    }
+
+    #[tokio::test]
+    async fn oast_generator_requires_an_enabled_oast_config() {
+        let (db, project) = oast_fixture_db("oast disabled").await;
+        let oast = crate::oast::OastService::new(db.clone(), crate::config::OastConfig::default())
+            .unwrap();
+        let service = FuzzerService::new(
+            db.clone(),
+            fixture_reply(&db),
+            oast,
+            PlaceholderKey::from_bytes(vec![6; 32]),
+        );
+        let template = oast_fuzz_template(vec![PayloadGenerator::Oast { count: Some(1) }]);
+        let error = service.start(project, template, false).await.unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Unavailable);
+        // No job row was written: the gate fires before persistence.
+        assert!(db.list_fuzz_jobs(project).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1856,6 +2170,9 @@ mod tests {
             payload_generators: vec![],
             transforms: vec![],
             strategy: FuzzStrategy::Sniper,
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
         };
         let job = db
             .create_fuzz_job(
@@ -1878,6 +2195,7 @@ mod tests {
         run_job(
             db.clone(),
             reply,
+            crate::oast::OastService::new(db.clone(), Default::default()).unwrap(),
             project.id,
             job.id,
             template,
@@ -1954,6 +2272,9 @@ mod tests {
             payload_generators: vec![],
             transforms: vec![],
             strategy: FuzzStrategy::Sniper,
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
         };
         let job = db
             .create_fuzz_job(
@@ -1979,6 +2300,7 @@ mod tests {
         let error = run_job(
             db.clone(),
             reply,
+            crate::oast::OastService::new(db.clone(), Default::default()).unwrap(),
             project.id,
             job.id,
             template,
@@ -2032,6 +2354,9 @@ mod tests {
             payload_generators: vec![],
             transforms: vec![],
             strategy: FuzzStrategy::Sniper,
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
         };
         let job = db
             .create_fuzz_job(
@@ -2056,6 +2381,7 @@ mod tests {
         run_job(
             db.clone(),
             reply,
+            crate::oast::OastService::new(db.clone(), Default::default()).unwrap(),
             project.id,
             job.id,
             template,

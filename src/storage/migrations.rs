@@ -57,10 +57,16 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "014_named_cookie_profiles",
         include_str!("../../migrations/014_named_cookie_profiles.sql"),
     ),
+    ("015_flows", include_str!("../../migrations/015_flows.sql")),
     (
         "015_browser_profiles",
         include_str!("../../migrations/015_browser_profiles.sql"),
     ),
+    (
+        "016_crawl_jobs",
+        include_str!("../../migrations/016_crawl_jobs.sql"),
+    ),
+    ("017_oast", include_str!("../../migrations/017_oast.sql")),
 ];
 
 pub fn schema_version(conn: &Connection) -> DomainResult<i32> {

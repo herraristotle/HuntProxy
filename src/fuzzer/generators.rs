@@ -3,6 +3,10 @@ use crate::domain::{DomainError, DomainResult, ErrorCode};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+/// Sentinel wordlist entries produced by `{"type":"oast"}`. Replaced with a
+/// real payload URL per case before the request draft is built; never sent.
+pub const OAST_PLACEHOLDER: &str = "oast-placeholder.huntproxy.invalid";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PayloadGenerator {
@@ -25,6 +29,16 @@ pub enum PayloadGenerator {
         include_alphanumeric: bool,
         #[serde(default = "default_regex_max_payloads")]
         max_payloads: u64,
+    },
+    /// Out-of-band interaction URL. Expands to placeholder payloads that the
+    /// fuzzer replaces per case with a fresh OAST URL (interactsh) or the
+    /// session's shared URL (single-URL providers). See `SPEC-oast.md`.
+    Oast {
+        /// Number of payload slots. Defaults to the longest existing
+        /// wordlist so paired insertion points line up under pitchfork;
+        /// when oast is the only list the default is 1.
+        #[serde(default)]
+        count: Option<u64>,
     },
 }
 
@@ -102,6 +116,25 @@ pub(super) fn expand_generators(
                 *include_alphanumeric,
                 (*generator_max).min(remaining),
             )?,
+            PayloadGenerator::Oast { count } => {
+                let default_len = template
+                    .wordlists
+                    .iter()
+                    .map(Vec::len)
+                    .max()
+                    .unwrap_or(1)
+                    .max(1) as u64;
+                let n = count.unwrap_or(default_len);
+                if n > remaining {
+                    return Err(DomainError::new(
+                        ErrorCode::CombinationLimit,
+                        format!(
+                            "oast generator wants {n} payload slots but only {remaining} remain in the project budget"
+                        ),
+                    ));
+                }
+                vec![OAST_PLACEHOLDER.to_string(); n as usize]
+            }
         };
         allocated += payloads.len() as u64;
         template.wordlists.push(payloads);
@@ -405,6 +438,9 @@ mod tests {
             ],
             transforms: vec![],
             strategy: crate::domain::FuzzStrategy::Sniper,
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
         };
         let error = expand_generators(&mut template, 5).unwrap_err();
         assert_eq!(error.code(), ErrorCode::CombinationLimit);
@@ -421,6 +457,76 @@ mod tests {
             ]
         );
         assert_eq!(template.payload_generators.len(), 2);
+    }
+
+    #[test]
+    fn oast_generator_matches_longest_list_or_explicit_count() {
+        // Default: match the longest existing wordlist so paired points line
+        // up under pitchfork; oast alone defaults to a single slot.
+        let mut paired = FuzzTemplate {
+            wordlists: vec![vec!["a".into(), "b".into(), "c".into()]],
+            payload_generators: vec![PayloadGenerator::Oast { count: None }],
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
+            ..serde_json::from_value(serde_json::json!({
+                "draft": {"url": "https://example.test/"},
+                "insertion_points": [{"name": "q", "location": "url"}]
+            }))
+            .unwrap()
+        };
+        expand_generators(&mut paired, 100).unwrap();
+        assert_eq!(
+            paired.wordlists[1],
+            vec![OAST_PLACEHOLDER, OAST_PLACEHOLDER, OAST_PLACEHOLDER]
+        );
+
+        let mut alone = FuzzTemplate {
+            wordlists: vec![],
+            payload_generators: vec![PayloadGenerator::Oast { count: None }],
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
+            ..serde_json::from_value(serde_json::json!({
+                "draft": {"url": "https://example.test/"},
+                "insertion_points": [{"name": "q", "location": "url"}]
+            }))
+            .unwrap()
+        };
+        expand_generators(&mut alone, 100).unwrap();
+        assert_eq!(alone.wordlists[0], vec![OAST_PLACEHOLDER]);
+
+        let mut explicit = FuzzTemplate {
+            wordlists: vec![vec!["a".into(), "b".into(), "c".into()]],
+            payload_generators: vec![PayloadGenerator::Oast { count: Some(2) }],
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
+            ..serde_json::from_value(serde_json::json!({
+                "draft": {"url": "https://example.test/"},
+                "insertion_points": [{"name": "q", "location": "url"}]
+            }))
+            .unwrap()
+        };
+        expand_generators(&mut explicit, 100).unwrap();
+        assert_eq!(explicit.wordlists[1], vec![OAST_PLACEHOLDER, OAST_PLACEHOLDER]);
+
+        // Bounds respected: requesting more slots than the budget is loud.
+        let mut bounded = FuzzTemplate {
+            wordlists: vec![],
+            payload_generators: vec![PayloadGenerator::Oast { count: Some(6) }],
+            oast_session_id: None,
+            oast_payload_url: None,
+            oast_per_case_labels: false,
+            ..serde_json::from_value(serde_json::json!({
+                "draft": {"url": "https://example.test/"},
+                "insertion_points": [{"name": "q", "location": "url"}]
+            }))
+            .unwrap()
+        };
+        let error = expand_generators(&mut bounded, 5).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::CombinationLimit);
+        assert!(bounded.wordlists.is_empty());
     }
 
     #[test]

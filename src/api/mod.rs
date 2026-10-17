@@ -244,6 +244,28 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(cancel_flow_job),
         )
         .route(
+            "/api/v1/projects/{id}/oast",
+            get(list_oast_sessions)
+                .post(create_oast_session)
+                .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/projects/{id}/oast/{sid}/new_url",
+            post(oast_new_url).layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/projects/{id}/oast/{sid}/poll",
+            post(oast_poll),
+        )
+        .route(
+            "/api/v1/projects/{id}/oast/{sid}/interactions",
+            get(oast_interactions),
+        )
+        .route(
+            "/api/v1/projects/{id}/oast/{sid}/stop",
+            post(oast_stop),
+        )
+        .route(
             "/api/v1/projects/{id}/exchanges/compare",
             get(compare_exchanges),
         )
@@ -300,6 +322,20 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(fuzz_case_diff),
         )
         .route(
+            "/api/v1/projects/{id}/crawl-jobs",
+            get(list_crawl_jobs)
+                .post(start_crawl)
+                .layer(DefaultBodyLimit::max(payload_body_limit)),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}/cancel",
+            post(cancel_crawl),
+        )
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/{jid}",
+            delete(delete_crawl),
+        )
+        .route(
             "/api/v1/projects/{id}/websockets",
             get(list_websocket_connections),
         )
@@ -343,6 +379,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/doctor", get(doctor))
         .route("/api/v1/extensions", get(list_extensions))
         .route("/api/v1/extensions/{plugin_id}", get(describe_extension))
+        .route(
+            "/api/v1/oast-providers",
+            get(list_oast_providers).post(create_oast_provider),
+        )
+        .route(
+            "/api/v1/oast-providers/{pid}",
+            patch(update_oast_provider).delete(delete_oast_provider),
+        )
+        .route(
+            "/api/v1/oast-providers/{pid}/default",
+            post(set_oast_provider_default),
+        )
         .route(
             "/api/v1/projects/{id}/extension-jobs",
             post(run_extension).layer(DefaultBodyLimit::max(payload_body_limit)),
@@ -1455,6 +1503,147 @@ async fn flow_node_catalog() -> Response {
     Json(serde_json::json!({ "nodes": crate::flow::node_catalog() })).into_response()
 }
 
+#[derive(Deserialize)]
+struct OastCreateBody {
+    purpose: Option<String>,
+    watch: Option<bool>,
+    provider_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct OastNewUrlBody {
+    case_index: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct OastInteractionsQuery {
+    label: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn list_oast_sessions(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    match state.oast.list(id).await {
+        Ok(sessions) => Json(serde_json::json!({ "sessions": sessions })).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn create_oast_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<OastCreateBody>,
+) -> Response {
+    match state
+        .oast
+        .create(
+            id,
+            body.purpose,
+            body.watch.unwrap_or(true),
+            body.provider_id,
+        )
+        .await
+    {
+        Ok(session) => Json(session).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn oast_new_url(
+    State(state): State<Arc<AppState>>,
+    Path((id, sid)): Path<(i64, i64)>,
+    Json(body): Json<OastNewUrlBody>,
+) -> Response {
+    match state.oast.new_url(id, sid, body.case_index).await {
+        Ok(view) => Json(view).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn oast_poll(
+    State(state): State<Arc<AppState>>,
+    Path((id, sid)): Path<(i64, i64)>,
+) -> Response {
+    match state.oast.poll(id, sid).await {
+        Ok(interactions) => Json(serde_json::json!({ "interactions": interactions }))
+            .into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn oast_interactions(
+    State(state): State<Arc<AppState>>,
+    Path((id, sid)): Path<(i64, i64)>,
+    Query(query): Query<OastInteractionsQuery>,
+) -> Response {
+    match state
+        .oast
+        .interactions(id, sid, query.label, query.limit, query.offset)
+        .await
+    {
+        Ok(page) => Json(page).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn oast_stop(
+    State(state): State<Arc<AppState>>,
+    Path((id, sid)): Path<(i64, i64)>,
+) -> Response {
+    match state.oast.stop(id, sid).await {
+        Ok(session) => Json(session).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn list_oast_providers(State(state): State<Arc<AppState>>) -> Response {
+    match state.oast.list_providers().await {
+        Ok(providers) => Json(serde_json::json!({ "providers": providers })).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn create_oast_provider(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<crate::oast::OastProviderCreate>,
+) -> Response {
+    match state.oast.add_provider(body).await {
+        Ok(provider) => (StatusCode::CREATED, Json(provider)).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn update_oast_provider(
+    State(state): State<Arc<AppState>>,
+    Path(pid): Path<i64>,
+    Json(body): Json<crate::oast::OastProviderPatch>,
+) -> Response {
+    match state.oast.update_provider(pid, body).await {
+        Ok(provider) => Json(provider).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn delete_oast_provider(
+    State(state): State<Arc<AppState>>,
+    Path(pid): Path<i64>,
+) -> Response {
+    match state.oast.delete_provider(pid).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn set_oast_provider_default(
+    State(state): State<Arc<AppState>>,
+    Path(pid): Path<i64>,
+) -> Response {
+    match state.oast.set_provider_default(pid).await {
+        Ok(provider) => Json(provider).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
 async fn list_flows(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
     match state.db.list_flows(ProjectId(id)).await {
         Ok(flows) => Json(serde_json::json!({ "flows": flows })).into_response(),
@@ -2203,6 +2392,70 @@ async fn cancel_fuzz(
             });
             StatusCode::NO_CONTENT.into_response()
         }
+        Err(e) => error_response(e),
+    }
+}
+
+async fn list_crawl_jobs(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
+    match state.crawl_jobs.list(ProjectId(id)).await {
+        Ok(jobs) => Json(serde_json::json!({ "jobs": jobs })).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn start_crawl(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<crate::crawler::StartCrawlRequest>,
+) -> Response {
+    match state.crawl_jobs.start(ProjectId(id), body).await {
+        Ok(job) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "crawl".into(),
+                payload: serde_json::json!({
+                    "job_id": job.id.get(),
+                    "state": job.state,
+                    "action": "started",
+                }),
+            });
+            (StatusCode::CREATED, Json(job)).into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+async fn cancel_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state
+        .crawl_jobs
+        .cancel_for_project(ProjectId(id), CrawlJobId(jid))
+        .await
+    {
+        Ok(()) => {
+            let _ = state.events.send(AppEvent {
+                project_id: id,
+                kind: "crawl".into(),
+                payload: serde_json::json!({ "job_id": jid, "state": "cancelling" }),
+            });
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+async fn delete_crawl(
+    State(state): State<Arc<AppState>>,
+    Path((id, jid)): Path<(i64, i64)>,
+) -> Response {
+    match state
+        .crawl_jobs
+        .delete(ProjectId(id), CrawlJobId(jid))
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => error_response(e),
     }
 }
