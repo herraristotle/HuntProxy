@@ -1903,7 +1903,10 @@ mod tests {
             })
             .await
             .unwrap();
-        let session = db.create_browser_session(project.id).await.unwrap();
+        let session = db
+            .create_browser_session(project.id, Some("default".into()))
+            .await
+            .unwrap();
         let mut document = spool_exchange(project.id);
         document.host = "example.com".into();
         document.authority = "example.com".into();

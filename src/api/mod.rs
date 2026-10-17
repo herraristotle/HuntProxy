@@ -312,6 +312,16 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(send_websocket_message).layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
         )
         .route(
+            "/api/v1/projects/{id}/browser-profiles",
+            get(list_browser_profiles)
+                .post(create_browser_profile)
+                .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/projects/{id}/browser-profiles/{profile}",
+            delete(delete_browser_profile),
+        )
+        .route(
             "/api/v1/projects/{id}/browser-sessions",
             get(browser_status)
                 .post(start_browser)
@@ -411,6 +421,7 @@ fn private_router(state: Arc<AppState>) -> Router {
                 "/internal/mcp/call",
                 post(internal_mcp_call).layer(DefaultBodyLimit::max(payload_body_limit)),
             )
+            .route("/internal/mcp/tools", get(internal_mcp_tools))
             .route("/internal/shutdown", post(internal_shutdown))
             .with_state(state),
     )
@@ -428,6 +439,14 @@ fn api_payload_body_limit(max_body_bytes: u64) -> usize {
 async fn internal_shutdown(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     state.shutdown.cancel();
     Json(serde_json::json!({ "ok": true }))
+}
+
+async fn internal_mcp_tools() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocol": crate::INTERNAL_PROTOCOL_VERSION,
+        "tools": crate::mcp::tool_defs(),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -742,10 +761,7 @@ async fn delete_project(State(state): State<Arc<AppState>>, Path(id): Path<i64>)
         Err(error) => return error_response(error),
         _ => {}
     }
-    if let Err(error) = state.browser.reset_project_profile(project_id).await {
-        return error_response(error);
-    }
-    match state.db.delete_project(project_id).await {
+    match state.browser.delete_project(project_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => error_response(error),
     }
@@ -976,7 +992,8 @@ async fn set_project_cookie(
         Err(error) => return error_response(error),
     };
     if let Some(name) = body.profile_name.as_deref() {
-        let profile = match crate::cookies::validate_cookie_profile(&body.target_url, cookie) {
+        let profile = match crate::cookies::validate_named_cookie_profile(&body.target_url, cookie)
+        {
             Ok(profile) => profile,
             Err(error) => return error_response(error),
         };
@@ -1963,6 +1980,7 @@ async fn list_reply_tabs(State(state): State<Arc<AppState>>, Path(id): Path<i64>
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UpsertTab {
     id: Option<i64>,
     name: String,
@@ -2140,6 +2158,7 @@ async fn list_fuzz_jobs(State(state): State<Arc<AppState>>, Path(id): Path<i64>)
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StartFuzzBody {
     template: FuzzTemplate,
     confirm: Option<bool>,
@@ -2356,11 +2375,58 @@ async fn send_websocket_message(
     }
 }
 
+async fn list_browser_profiles(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Response {
+    match state.browser.browser_profiles(ProjectId(id)).await {
+        Ok(profiles) => Json(serde_json::json!({ "profiles": profiles })).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateBrowserProfile {
+    profile: String,
+}
+
+async fn create_browser_profile(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<CreateBrowserProfile>,
+) -> Response {
+    match state
+        .browser
+        .create_browser_profile(ProjectId(id), &body.profile)
+        .await
+    {
+        Ok(profile) => (StatusCode::CREATED, Json(profile)).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn delete_browser_profile(
+    State(state): State<Arc<AppState>>,
+    Path((id, profile)): Path<(i64, String)>,
+) -> Response {
+    match state
+        .browser
+        .delete_browser_profile(ProjectId(id), &profile)
+        .await
+    {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => error_response(DomainError::not_found("browser profile")),
+        Err(error) => error_response(error),
+    }
+}
+
 async fn browser_status(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> Response {
-    match state.browser.active_sessions(ProjectId(id)).await {
-        Ok(sessions) => Json(serde_json::json!({
+    match state.browser.active_status(ProjectId(id)).await {
+        Ok(status) => Json(serde_json::json!({
             "runtime": state.browser.status(),
-            "sessions": sessions,
+            "sessions": status.sessions,
+            "resources": status.resources,
         }))
         .into_response(),
         Err(error) => error_response(error),
@@ -2369,8 +2435,17 @@ async fn browser_status(State(state): State<Arc<AppState>>, Path(id): Path<i64>)
 
 #[derive(Deserialize)]
 struct StartBrowser {
+    #[serde(default = "default_browser_start_url")]
     url: String,
+    profile: Option<String>,
+    cookie_profile: Option<String>,
+    #[serde(default)]
+    refresh_cookies: bool,
     engine_policy: Option<String>,
+}
+
+fn default_browser_start_url() -> String {
+    "about:blank".into()
 }
 
 async fn start_browser(
@@ -2387,7 +2462,17 @@ async fn start_browser(
             "engine_policy is obsolete; omit it to use Chromium",
         ));
     }
-    match state.browser.start(ProjectId(id), body.url).await {
+    match state
+        .browser
+        .start_with_profile_options(
+            ProjectId(id),
+            body.url,
+            body.profile.as_deref().unwrap_or("default"),
+            body.cookie_profile.as_deref(),
+            body.refresh_cookies,
+        )
+        .await
+    {
         Ok(session) => {
             let _ = state.events.send(AppEvent {
                 project_id: id,
@@ -2457,7 +2542,15 @@ async fn browser_cdp(
 ) -> Response {
     let project_id = ProjectId(id);
     let result = match body.op.as_str() {
-        "status" => state.browser.cdp_status(project_id).await,
+        "status" => match body.session_id {
+            Some(session_id) => {
+                state
+                    .browser
+                    .cdp_status_for_session(project_id, BrowserSessionId(session_id))
+                    .await
+            }
+            None => state.browser.cdp_status(project_id).await,
+        },
         "enable" | "disable" => {
             let session_id = match body.session_id {
                 Some(session_id) => BrowserSessionId(session_id),
@@ -2490,12 +2583,15 @@ async fn events(
     Path(id): Path<i64>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.events.subscribe();
+    let cancel = state.shutdown.clone();
     let stream = futures::stream::unfold(Some(rx), move |state_rx| {
         let id = id;
+        let cancel = cancel.clone();
         async move {
             let mut rx = state_rx?;
             loop {
                 tokio::select! {
+                    _ = cancel.cancelled() => return None,
                     _ = tokio::time::sleep(Duration::from_secs(15)) => {
                         return Some((Ok(Event::default().event("ping").data("{}")), Some(rx)));
                     }

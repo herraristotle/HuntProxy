@@ -37,11 +37,17 @@ pub struct Config {
     pub runtime_dir: PathBuf,
     pub node_path: Option<PathBuf>,
     pub browser_worker_path: Option<PathBuf>,
+    /// Resolved release runtime paths; these are not user configuration.
+    #[serde(skip)]
+    pub browser_playwright_core_path: Option<PathBuf>,
+    #[serde(skip)]
+    pub browser_chromium_path: Option<PathBuf>,
     /// Installed HuntProxy extensions. Each immediate child may contain one
     /// integrity-pinned `plugin.json` package.
     pub plugin_dir: PathBuf,
     pub auto_start_daemon: bool,
-    /// Stop an inactive MCP bridge/daemon and its browsers. Zero disables it.
+    /// Stop an inactive auto-started daemon and its browsers. The MCP bridge
+    /// stays connected and can recover the daemon. Zero disables idle shutdown.
     pub idle_timeout_seconds: u64,
     /// Optional default and host-specific upstream proxies for outbound requests.
     pub upstream_proxies: UpstreamProxyConfig,
@@ -55,8 +61,17 @@ pub struct Config {
 pub struct UpstreamProxyConfig {
     /// Fallback proxy used when no host rule matches.
     pub default: Option<String>,
+    /// Project-wide proxies. These take precedence over host rules and the
+    /// default, while an explicit per-request override remains authoritative.
+    pub project_rules: Vec<ProjectUpstreamProxyRule>,
     /// Exact hosts and `*.example.com` suffix rules. Exact matches win.
     pub rules: Vec<UpstreamProxyRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectUpstreamProxyRule {
+    pub project_id: i64,
+    pub proxy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +101,26 @@ impl Default for FlowsConfig {
 }
 
 impl UpstreamProxyConfig {
+    pub fn proxy_for_project(
+        &self,
+        project_id: i64,
+        host: &str,
+        request_override: Option<&str>,
+    ) -> DomainResult<Option<String>> {
+        if let Some(proxy) = request_override {
+            validate_upstream_proxy_url(proxy)?;
+            return Ok(Some(proxy.to_string()));
+        }
+        if let Some(rule) = self
+            .project_rules
+            .iter()
+            .find(|rule| rule.project_id == project_id)
+        {
+            return Ok(Some(rule.proxy.clone()));
+        }
+        self.proxy_for(host, None)
+    }
+
     pub fn proxy_for(
         &self,
         host: &str,
@@ -115,6 +150,22 @@ impl UpstreamProxyConfig {
     fn validate(&self) -> DomainResult<()> {
         if let Some(proxy) = &self.default {
             validate_upstream_proxy_url(proxy)?;
+        }
+        let mut project_ids = std::collections::HashSet::new();
+        for rule in &self.project_rules {
+            if rule.project_id <= 0 {
+                return Err(DomainError::new(
+                    ErrorCode::ConfigInvalid,
+                    "upstream proxy project_id must be positive",
+                ));
+            }
+            if !project_ids.insert(rule.project_id) {
+                return Err(DomainError::new(
+                    ErrorCode::ConfigInvalid,
+                    "upstream proxy project_id must be unique",
+                ));
+            }
+            validate_upstream_proxy_url(&rule.proxy)?;
         }
         for rule in &self.rules {
             validate_host_pattern(&rule.host)?;
@@ -191,6 +242,8 @@ impl Default for Config {
             runtime_dir: data_dir.join("runtime"),
             node_path: which_path("node"),
             browser_worker_path: None,
+            browser_playwright_core_path: None,
+            browser_chromium_path: None,
             plugin_dir: data_dir.join("plugins"),
             auto_start_daemon: true,
             idle_timeout_seconds: 60 * 60,
@@ -220,6 +273,11 @@ impl Config {
                 DomainError::new(ErrorCode::ConfigInvalid, format!("parse config: {e}"))
             })?;
             cfg.apply_file(file);
+        }
+        if let Some(path) = std::env::var_os("HUNTPROXY_BROWSER_WORKER_PATH")
+            .or_else(|| std::env::var_os("BB_BROWSER_WORKER_PATH"))
+        {
+            cfg.browser_worker_path = Some(PathBuf::from(path));
         }
         if cfg.node_path.as_ref().is_none_or(|path| !path.is_file()) {
             let managed_node = cfg.runtime_dir.join("node/bin/node");
@@ -273,6 +331,9 @@ impl Config {
         }
         if let Some(v) = f.plugin_dir {
             self.plugin_dir = PathBuf::from(v);
+        }
+        if let Some(v) = f.browser_worker_path {
+            self.browser_worker_path = Some(PathBuf::from(v));
         }
         if let Some(v) = f.upstream_proxies {
             self.upstream_proxies = v;
@@ -382,6 +443,10 @@ impl Config {
             auto_start_daemon: Some(self.auto_start_daemon),
             idle_timeout_seconds: Some(self.idle_timeout_seconds),
             node_path: self.node_path.as_ref().map(|p| p.display().to_string()),
+            browser_worker_path: self
+                .browser_worker_path
+                .as_ref()
+                .map(|p| p.display().to_string()),
             plugin_dir: Some(self.plugin_dir.display().to_string()),
             upstream_proxies: Some(self.upstream_proxies.clone()),
             flows: Some(self.flows.clone()),
@@ -407,6 +472,7 @@ struct ConfigFile {
     auto_start_daemon: Option<bool>,
     idle_timeout_seconds: Option<u64>,
     node_path: Option<String>,
+    browser_worker_path: Option<String>,
     plugin_dir: Option<String>,
     upstream_proxies: Option<UpstreamProxyConfig>,
     flows: Option<FlowsConfig>,
@@ -543,9 +609,29 @@ mod tests {
     }
 
     #[test]
+    fn configured_browser_worker_survives_serialization_and_loading() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = Config {
+            data_dir: directory.path().to_owned(),
+            browser_worker_path: Some(directory.path().join("custom-worker/index.js")),
+            ..Config::default()
+        };
+        config.write_default_config().unwrap();
+        let encoded = std::fs::read_to_string(directory.path().join(CONFIG_FILE_NAME)).unwrap();
+        let file: ConfigFile = toml::from_str(&encoded).unwrap();
+        let mut loaded = Config::default();
+        loaded.apply_file(file);
+        assert_eq!(loaded.browser_worker_path, config.browser_worker_path);
+    }
+
+    #[test]
     fn upstream_proxy_selection_prefers_exact_and_longest_wildcard() {
         let config = UpstreamProxyConfig {
             default: Some("http://default.test:8080".into()),
+            project_rules: vec![ProjectUpstreamProxyRule {
+                project_id: 41,
+                proxy: "socks5h://project.test:1080".into(),
+            }],
             rules: vec![
                 UpstreamProxyRule {
                     host: "*.example.com".into(),
@@ -561,6 +647,20 @@ mod tests {
                 },
             ],
         };
+        assert_eq!(
+            config
+                .proxy_for_project(41, "one.api.example.com", None)
+                .unwrap()
+                .as_deref(),
+            Some("socks5h://project.test:1080")
+        );
+        assert_eq!(
+            config
+                .proxy_for_project(41, "one.api.example.com", Some("http://override.test:8080"))
+                .unwrap()
+                .as_deref(),
+            Some("http://override.test:8080")
+        );
         assert_eq!(
             config
                 .proxy_for("one.api.example.com", None)
@@ -586,6 +686,20 @@ mod tests {
                 .as_deref(),
             Some("socks5h://override.test:1080")
         );
+
+        let isolated = UpstreamProxyConfig {
+            project_rules: vec![ProjectUpstreamProxyRule {
+                project_id: 41,
+                proxy: "socks5h://project.test:1080".into(),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            isolated
+                .proxy_for_project(42, "one.api.example.com", None)
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -593,5 +707,29 @@ mod tests {
         assert!(validate_upstream_proxy_url("https://proxy.test:443").is_err());
         assert!(validate_upstream_proxy_url("http://proxy.test:8080/path").is_err());
         assert!(validate_host_pattern("foo.*.example.com").is_err());
+        assert!(UpstreamProxyConfig {
+            project_rules: vec![ProjectUpstreamProxyRule {
+                project_id: 0,
+                proxy: "http://proxy.test:8080".into(),
+            }],
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+        assert!(UpstreamProxyConfig {
+            project_rules: vec![
+                ProjectUpstreamProxyRule {
+                    project_id: 41,
+                    proxy: "http://one.test:8080".into(),
+                },
+                ProjectUpstreamProxyRule {
+                    project_id: 41,
+                    proxy: "http://two.test:8080".into(),
+                },
+            ],
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
     }
 }

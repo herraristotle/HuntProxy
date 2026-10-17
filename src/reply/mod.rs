@@ -1,6 +1,6 @@
 //! Reply drafts, placeholder resolution, send orchestration.
 
-mod raw;
+pub(crate) mod raw;
 mod raw_h2;
 
 pub use raw::*;
@@ -350,7 +350,22 @@ pub async fn materialize_request(
     })
 }
 
+fn validate_reply_identity(draft: &ReplyDraft) -> DomainResult<()> {
+    if matches!(draft.identity, Some(ReplyIdentity::Named { .. }))
+        && draft
+            .header_overrides
+            .iter()
+            .any(|header| header.name.eq_ignore_ascii_case("cookie"))
+    {
+        return Err(DomainError::invalid(
+            "named identity cannot be combined with an explicit Cookie override",
+        ));
+    }
+    Ok(())
+}
+
 pub fn normalize_reply_draft(mut draft: ReplyDraft) -> DomainResult<ReplyDraft> {
+    validate_reply_identity(&draft)?;
     let body_sources = usize::from(draft.body_override.is_some())
         + usize::from(draft.body_text.is_some())
         + usize::from(draft.body_json.is_some())
@@ -590,6 +605,9 @@ pub struct ReplyBodyPreview {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ReplySendResult {
+    /// Effective logical URL after project request rules, before any transport
+    /// route substitutes a wire destination.
+    pub effective_url: String,
     pub exchange_id: Option<ExchangeId>,
     pub diff: Option<ResponseDiff>,
     /// Present only when capture scope excludes the exchange.
@@ -600,6 +618,9 @@ pub struct ReplySendResult {
     pub response_body_hash: String,
     pub duration_ms: i64,
     pub status_code: u16,
+    /// The requested identity selector; contains no credential values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ReplyIdentity>,
 }
 
 impl ReplySendContext {
@@ -639,6 +660,24 @@ pub struct ReplyService {
 impl ReplyService {
     pub fn placeholder_key(&self) -> &PlaceholderKey {
         &self.placeholder_key
+    }
+
+    /// Resolve once for a request or a job. The snapshot stays host-side and
+    /// uses the same stored cookie resolver as extension identity selectors.
+    pub(crate) async fn resolve_named_identity(
+        &self,
+        project_id: ProjectId,
+        draft: &ReplyDraft,
+    ) -> DomainResult<Option<crate::cookies::StoredCookieProfile>> {
+        let Some(ReplyIdentity::Named { profile }) = &draft.identity else {
+            return Ok(None);
+        };
+        validate_reply_identity(draft)?;
+        self.db
+            .get_named_cookie_profile(project_id, profile)
+            .await?
+            .ok_or_else(|| DomainError::not_found("named cookie profile"))
+            .map(Some)
     }
 }
 
@@ -683,6 +722,8 @@ impl ReplyService {
             follow_redirects,
             ReplySendContext::reply(base_exchange_id, tab_id),
             upstream_proxy,
+            None,
+            None,
         )
         .await
     }
@@ -704,6 +745,56 @@ impl ReplyService {
             follow_redirects,
             context,
             None,
+            None,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn send_with_context_and_pinned_identity(
+        &self,
+        project_id: ProjectId,
+        base_exchange_id: Option<ExchangeId>,
+        draft: &ReplyDraft,
+        protocol: ProtocolPreference,
+        context: ReplySendContext,
+        identity: Option<&crate::cookies::StoredCookieProfile>,
+    ) -> DomainResult<ReplySendResult> {
+        self.send_with_context_and_proxy(
+            project_id,
+            base_exchange_id,
+            draft,
+            protocol,
+            0,
+            context,
+            None,
+            identity,
+            None,
+        )
+        .await
+    }
+
+    /// Send a semantic request while requiring the URL that remains after the
+    /// actual request-rule pass to keep the expected origin. This is used by
+    /// bounded automatic discovery, where a rule must not turn a passive
+    /// same-origin fetch into cross-origin egress.
+    pub async fn send_same_origin(
+        &self,
+        project_id: ProjectId,
+        draft: &ReplyDraft,
+        expected_origin: &str,
+    ) -> DomainResult<ReplySendResult> {
+        self.send_with_context_and_proxy(
+            project_id,
+            None,
+            draft,
+            ProtocolPreference::Auto,
+            0,
+            ReplySendContext::reply(None, None),
+            None,
+            None,
+            Some(expected_origin),
         )
         .await
     }
@@ -718,8 +809,24 @@ impl ReplyService {
         follow_redirects: u32,
         context: ReplySendContext,
         upstream_proxy_override: Option<&str>,
+        pinned_identity: Option<&crate::cookies::StoredCookieProfile>,
+        expected_origin: Option<&str>,
     ) -> DomainResult<ReplySendResult> {
         let project = self.db.get_project(project_id).await?;
+        let named_identity = match pinned_identity {
+            Some(_) if !matches!(draft.identity, Some(ReplyIdentity::Named { .. })) => {
+                return Err(DomainError::invalid(
+                    "pinned identity requires named selection",
+                ));
+            }
+            Some(identity) if identity.project_id != project_id => {
+                return Err(DomainError::invalid(
+                    "named identity belongs to another project",
+                ));
+            }
+            Some(identity) => Some(identity.clone()),
+            None => self.resolve_named_identity(project_id, draft).await?,
+        };
         let mut mat = materialize_request(
             &self.db,
             project_id,
@@ -732,6 +839,23 @@ impl ReplyService {
         // for the effective destination, not the draft destination.
         let mut applied_rules =
             crate::request_rules::apply_url_rules(&self.db, project_id, &mut mat.url).await?;
+        if matches!(
+            draft.identity,
+            Some(ReplyIdentity::Named { .. } | ReplyIdentity::Anonymous { .. })
+        ) {
+            let url = url::Url::parse(&mat.url)
+                .map_err(|_| DomainError::invalid("invalid request URL"))?;
+            if !url.username().is_empty() || url.password().is_some() {
+                return Err(DomainError::invalid(
+                    "named or anonymous identity cannot be combined with URL credentials",
+                ));
+            }
+        }
+        if expected_origin.is_some_and(|origin| origins_differ(origin, &mat.url)) {
+            return Err(DomainError::scope_denied(
+                "request URL changed origin after applying request rules",
+            ));
+        }
         if let Some(target_host) = context.plugin_target_host.as_deref() {
             if !url_is_in_scope(&mat.url, &project.scope)? {
                 return Err(DomainError::scope_denied(
@@ -757,7 +881,24 @@ impl ReplyService {
             .header_tombstones
             .iter()
             .any(|name| name.eq_ignore_ascii_case("cookie"));
-        if !cookie_overridden && !cookie_suppressed {
+        if let Some(identity) = &named_identity {
+            let cookie = identity.cookie_header_for_url(&mat.url)?.ok_or_else(|| {
+                DomainError::invalid("named identity has no applicable cookies for request URL")
+            })?;
+            mat.headers.retain(|(name, _)| {
+                !is_project_credential_header(name)
+                    || draft.header_overrides.iter().any(|header| {
+                        header.name.eq_ignore_ascii_case(name)
+                            && !name.eq_ignore_ascii_case("cookie")
+                    })
+            });
+            if !cookie_suppressed {
+                mat.headers.push(("Cookie".into(), cookie.into_bytes()));
+            }
+        } else if !matches!(draft.identity, Some(ReplyIdentity::Anonymous { .. }))
+            && !cookie_overridden
+            && !cookie_suppressed
+        {
             if let Some(profile) = self
                 .db
                 .get_cookie_profile_for_url(project_id, &mat.url)
@@ -787,6 +928,13 @@ impl ReplyService {
             } else {
                 Vec::new()
             };
+        let selected_credentials = named_identity.as_ref().map(|_| {
+            mat.headers
+                .iter()
+                .filter(|(name, _)| is_project_credential_header(name))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
         applied_rules.extend(
             crate::request_rules::apply_message_rules(
                 &self.db,
@@ -803,13 +951,21 @@ impl ReplyService {
         // rules) has had a chance to modify the request. Explicit probe
         // overrides remain authoritative so extensions can supply a deliberate
         // alternate identity without exposing or inheriting project secrets.
-        if draft.credential_mode == ReplyCredentialMode::WithoutProjectCredentials {
+        if matches!(draft.identity, Some(ReplyIdentity::Anonymous { .. })) {
+            mat.headers
+                .retain(|(name, _)| !is_project_credential_header(name));
+        } else if let Some(credentials) = selected_credentials {
+            mat.headers
+                .retain(|(name, _)| !is_project_credential_header(name));
+            mat.headers.extend(credentials);
+        } else if draft.credential_mode == ReplyCredentialMode::WithoutProjectCredentials {
             mat.headers
                 .retain(|(name, _)| !is_project_credential_header(name));
             mat.headers.extend(explicit_probe_credentials);
         }
 
         // Scope controls persistence only; it never blocks egress.
+        let effective_url = mat.url.clone();
         let should_capture = url_is_in_scope(&mat.url, &project.scope)?;
         let target = TargetRef::from_url(&mat.url)?;
         let rotation = self.db.next_ip_rotation_route(project_id, &mat.url).await?;
@@ -824,9 +980,11 @@ impl ReplyService {
         let method = mat.method.parse::<http::Method>().map_err(|error| {
             DomainError::invalid(format!("invalid HTTP method {}: {error}", mat.method))
         })?;
-        let upstream_proxy = self
-            .upstream_proxies
-            .proxy_for(&wire_target.host, upstream_proxy_override)?;
+        let upstream_proxy = self.upstream_proxies.proxy_for_project(
+            project_id.get(),
+            &wire_target.host,
+            upstream_proxy_override,
+        )?;
         let req_headers: Vec<HeaderEntry> = mat
             .headers
             .iter()
@@ -1087,6 +1245,11 @@ impl ReplyService {
         }
 
         if let Some(exchange_id) = exchange_id {
+            let mut audit = serde_json::json!({ "parent": base_exchange_id.map(|i| i.get()) });
+            if let Some(identity) = &draft.identity {
+                audit["identity"] = serde_json::to_value(identity)
+                    .map_err(|error| DomainError::new(ErrorCode::Internal, error.to_string()))?;
+            }
             let _ = self
                 .db
                 .audit(
@@ -1103,12 +1266,13 @@ impl ReplyService {
                     }),
                     Some("exchange"),
                     Some(&exchange_id.to_string()),
-                    serde_json::json!({ "parent": base_exchange_id.map(|i| i.get()) }),
+                    audit,
                 )
                 .await;
         }
 
         Ok(ReplySendResult {
+            effective_url,
             exchange_id,
             diff,
             response: ephemeral_response,
@@ -1117,6 +1281,7 @@ impl ReplyService {
             response_body_hash,
             duration_ms,
             status_code,
+            identity: draft.identity.clone(),
         })
     }
 }
@@ -1185,6 +1350,58 @@ mod tests {
         fn provenance(&self) -> TransportProvenance {
             TransportProvenance::GenericUnprofiled
         }
+    }
+
+    #[tokio::test]
+    async fn automatic_same_origin_send_rejects_cross_origin_url_rewrite() {
+        let db = Arc::new(Db::open_in_memory().await.unwrap());
+        let project = db
+            .create_project(CreateProjectRequest {
+                name: "page analysis".into(),
+                target_url: "https://example.com/".into(),
+                advanced: None,
+            })
+            .await
+            .unwrap();
+        db.create_request_rule(
+            project.id,
+            crate::request_rules::RequestRuleInput {
+                name: "alternate asset host".into(),
+                enabled: true,
+                position: 0,
+                host_pattern: Some("example.com".into()),
+                target: crate::request_rules::RequestRuleTarget::Url,
+                operation: crate::request_rules::RequestRuleOperation::Replace,
+                header_name: None,
+                match_kind: crate::request_rules::RequestRuleMatchKind::Literal,
+                pattern: "https://example.com/".into(),
+                replacement: Some("https://static.example.net/".into()),
+                replace_all: true,
+            },
+        )
+        .await
+        .unwrap();
+        let service = ReplyService {
+            db,
+            transport: Arc::new(CannedTransport),
+            placeholder_key: PlaceholderKey::from_bytes(vec![1; 32]),
+            upstream_proxies: Default::default(),
+        };
+
+        let error = service
+            .send_same_origin(
+                project.id,
+                &ReplyDraft {
+                    method: Some("GET".into()),
+                    url: Some("https://example.com/static/app.js".into()),
+                    ..Default::default()
+                },
+                "https://example.com/page",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ScopeDenied);
+        assert!(error.to_string().contains("changed origin"));
     }
 
     struct GzipTransport;

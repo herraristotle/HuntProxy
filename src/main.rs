@@ -6,9 +6,7 @@ use huntproxy::config::Config;
 use huntproxy::domain::{CreateProjectRequest, DomainError, DomainResult, ErrorCode};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
 
@@ -45,6 +43,8 @@ enum Commands {
     Status,
     /// Graceful stop.
     Stop,
+    /// Restart or recover the daemon while preserving saved project state.
+    Restart,
     /// Check for or install a verified GitHub Release binary.
     Update {
         /// Check whether another release is available without changing files.
@@ -53,6 +53,16 @@ enum Commands {
         /// Install a specific stable release instead of the latest release.
         #[arg(long, value_name = "VERSION")]
         version: Option<String>,
+    },
+    /// Prepare release-owned runtime, plugins, and project migrations.
+    #[command(hide = true)]
+    PrepareUpdate,
+    #[command(hide = true)]
+    ReleaseInfo,
+    #[command(hide = true)]
+    InstallRelease {
+        #[arg(long)]
+        executable: PathBuf,
     },
     /// Project commands.
     Project {
@@ -176,16 +186,9 @@ async fn run(cli: Cli) -> DomainResult<()> {
     match cli.command {
         Commands::Init => {
             init_logging("info");
-            let mut cfg = Config::default();
-            if let Some(d) = cli.data_dir {
-                cfg.data_dir = d;
-                cfg.spool_dir = cfg.data_dir.join("spool");
-                cfg.export_dir = cfg.data_dir.join("exports");
-                cfg.runtime_dir = cfg.data_dir.join("runtime");
-                cfg.plugin_dir = cfg.data_dir.join("plugins");
-            }
-            cfg.ensure_layout()?;
-            cfg.write_default_config()?;
+            let cfg = Config::load(cli.data_dir)?;
+            let _maintenance = app::acquire_bootstrap_lock(&cfg).await?;
+            app::recover_installation(&cfg, true).await?;
             // Create DB via open
             let db = huntproxy::storage::Db::open(&cfg).await?;
             let ver = db.schema_version().await?;
@@ -225,17 +228,58 @@ async fn run(cli: Cli) -> DomainResult<()> {
             );
             app::run_daemon(cfg).await
         }
+        Commands::PrepareUpdate => {
+            init_logging_stderr("warn");
+            let mut cfg = Config::load(cli.data_dir)?;
+            app::prepare_release_runtime(&mut cfg).await?;
+            ensure_ca(&cfg)?;
+            let _ = huntproxy::reply::PlaceholderKey::load_or_create(&cfg.placeholder_key_path())?;
+            let db = huntproxy::storage::Db::open(&cfg).await?;
+            let schema = db.schema_version().await?;
+            println!(
+                "{}",
+                serde_json::json!({"ok":true,"version":env!("CARGO_PKG_VERSION"),"schema":schema})
+            );
+            Ok(())
+        }
+        Commands::ReleaseInfo => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "version":env!("CARGO_PKG_VERSION"),
+                    "schema":huntproxy::storage::current_schema_version(),
+                    "plugins":huntproxy::installation::bundled_plugin_names()?,
+                })
+            );
+            Ok(())
+        }
+        Commands::InstallRelease { executable } => {
+            init_logging_stderr("warn");
+            let outcome = huntproxy::update::install_local(cli.data_dir, executable).await?;
+            if let huntproxy::update::UpdateOutcome::Installed {
+                installed,
+                data_backup_path,
+                daemon_restarted,
+                ..
+            } = outcome
+            {
+                println!("Installed HuntProxy {installed}; runtime and official plugins ready");
+                if let Some(path) = data_backup_path {
+                    println!("  restore point: {}", path.display());
+                }
+                if daemon_restarted {
+                    println!("  daemon restarted; saved projects are ready");
+                }
+            }
+            Ok(())
+        }
         Commands::Mcp => {
             // MCP: logs to stderr only
             init_logging_stderr("warn");
             let cfg = Config::load(cli.data_dir.clone())?;
-            if huntproxy::mcp::stop_guard_blocks_start(&cfg) {
-                return Err(DomainError::new(
-                    ErrorCode::DaemonNotRunning,
-                    "HuntProxy was explicitly stopped for this MCP client; restart the client to use it again",
-                ));
-            }
-            ensure_daemon(&cfg).await?;
+            // Initialize the client connection even if the daemon is stopped
+            // or cannot start, so huntproxy_restart remains available. The
+            // backend ensures readiness before dispatching each operation.
             huntproxy::mcp::run_stdio_mcp_client(cfg).await
         }
         Commands::Doctor => {
@@ -318,6 +362,14 @@ async fn run(cli: Cli) -> DomainResult<()> {
             println!("daemon stopped");
             Ok(())
         }
+        Commands::Restart => {
+            init_logging_stderr("error");
+            let cfg = Config::load(cli.data_dir)?;
+            app::restart_daemon(&cfg).await?;
+            huntproxy::mcp::clear_stop_guard(&cfg);
+            println!("daemon restarted; saved project state and browser profiles preserved");
+            Ok(())
+        }
         Commands::Update { check, version } => {
             init_logging("error");
             let outcome = huntproxy::update::run(huntproxy::update::UpdateRequest {
@@ -340,10 +392,20 @@ async fn run(cli: Cli) -> DomainResult<()> {
                     previous,
                     installed,
                     backup_path,
+                    data_backup_path,
+                    daemon_restarted,
                 } => {
                     println!("Updated HuntProxy {previous} -> {installed}");
                     println!("  rollback: {}", backup_path.display());
-                    println!("Restart/reconnect AI clients to use the new MCP binary.");
+                    if let Some(path) = data_backup_path {
+                        println!("  project restore point: {}", path.display());
+                        println!(
+                            "Managed runtime and plugins are ready; saved projects are preserved."
+                        );
+                    }
+                    if daemon_restarted {
+                        println!("HuntProxy restarted; continue using your connected client.");
+                    }
                 }
             }
             Ok(())
@@ -351,7 +413,16 @@ async fn run(cli: Cli) -> DomainResult<()> {
         Commands::Project { cmd } => {
             init_logging("error");
             let cfg = Config::load(cli.data_dir)?;
-            ensure_daemon(&cfg).await?;
+            if matches!(
+                cmd,
+                ProjectCmd::Create { .. }
+                    | ProjectCmd::List
+                    | ProjectCmd::Rename { .. }
+                    | ProjectCmd::Delete { .. }
+                    | ProjectCmd::Usage { .. }
+            ) {
+                ensure_daemon(&cfg).await?;
+            }
             match cmd {
                 ProjectCmd::Create { name, target_url } => {
                     let body = serde_json::to_string(&CreateProjectRequest {
@@ -387,6 +458,8 @@ async fn run(cli: Cli) -> DomainResult<()> {
                     println!("{value}");
                 }
                 ProjectCmd::Reconcile { id } => {
+                    let _maintenance = app::acquire_bootstrap_lock(&cfg).await?;
+                    app::recover_installation(&cfg, true).await?;
                     let db = huntproxy::storage::Db::open(&cfg).await?;
                     let project_ids = match id {
                         Some(id) => vec![huntproxy::domain::ProjectId(id)],
@@ -414,6 +487,8 @@ async fn run(cli: Cli) -> DomainResult<()> {
                     include_secrets,
                     include_chromium_profile,
                 } => {
+                    let _maintenance = app::acquire_bootstrap_lock(&cfg).await?;
+                    app::recover_installation(&cfg, true).await?;
                     let db = huntproxy::storage::Db::open(&cfg).await?;
                     db.export_bundle(
                         &cfg,
@@ -432,6 +507,8 @@ async fn run(cli: Cli) -> DomainResult<()> {
                     println!("Exported project {id} to {}", output.display());
                 }
                 ProjectCmd::Import { input } => {
+                    let _maintenance = app::acquire_bootstrap_lock(&cfg).await?;
+                    app::recover_installation(&cfg, true).await?;
                     let db = huntproxy::storage::Db::open(&cfg).await?;
                     let project = if input
                         .extension()
@@ -477,6 +554,8 @@ async fn run(cli: Cli) -> DomainResult<()> {
         Commands::Backup { destination } => {
             init_logging("error");
             let cfg = Config::load(cli.data_dir)?;
+            let _maintenance = app::acquire_bootstrap_lock(&cfg).await?;
+            app::recover_installation(&cfg, true).await?;
             let db = huntproxy::storage::Db::open(&cfg).await?;
             let path = db.backup_to(destination).await?;
             println!("Backup written to {}", path.display());
@@ -485,6 +564,8 @@ async fn run(cli: Cli) -> DomainResult<()> {
         Commands::Har { cmd } => {
             init_logging("error");
             let cfg = Config::load(cli.data_dir)?;
+            let _maintenance = app::acquire_bootstrap_lock(&cfg).await?;
+            app::recover_installation(&cfg, true).await?;
             let db = huntproxy::storage::Db::open(&cfg).await?;
             match cmd {
                 HarCmd::Export {
@@ -793,103 +874,8 @@ fn ensure_ca(cfg: &Config) -> DomainResult<()> {
 }
 
 async fn ensure_daemon(cfg: &Config) -> DomainResult<()> {
-    if cfg.socket_path().exists() && daemon_get(cfg, "/api/v1/health").await.is_ok() {
-        return Ok(());
-    }
-    if !cfg.auto_start_daemon {
-        return Err(DomainError::new(
-            ErrorCode::DaemonNotRunning,
-            "daemon not running; start with HuntProxy serve",
-        ));
-    }
-    // Serialize auto-start attempts. Re-check health after acquiring the lock:
-    // another CLI may have started the daemon while this process was waiting.
-    let boot = cfg.bootstrap_lock_path();
-    let boot_file = std::fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&boot)
-        .map_err(|e| DomainError::new(ErrorCode::StorageError, e.to_string()))?;
-    #[cfg(unix)]
-    let _bootstrap_lock = tokio::task::spawn_blocking(move || {
-        nix::fcntl::Flock::lock(boot_file, nix::fcntl::FlockArg::LockExclusive)
-            .map_err(|(_, error)| error)
-    })
-    .await
-    .map_err(|e| DomainError::new(ErrorCode::Internal, format!("bootstrap lock task: {e}")))?
-    .map_err(|e| DomainError::new(ErrorCode::StorageError, format!("bootstrap lock: {e}")))?;
-    #[cfg(not(unix))]
-    let _bootstrap_lock = boot_file;
-
-    if daemon_get(cfg, "/api/v1/health").await.is_ok() {
-        return Ok(());
-    }
-
-    let bin = std::env::current_exe()
-        .map_err(|e| DomainError::new(ErrorCode::Internal, e.to_string()))?;
-    let startup_log_path = cfg.daemon_startup_log_path();
-    let mut startup_options = OpenOptions::new();
-    startup_options.create(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        startup_options.mode(0o600);
-    }
-    let startup_stdout = startup_options.open(&startup_log_path).map_err(|error| {
-        DomainError::new(
-            ErrorCode::StorageError,
-            format!("startup log {}: {error}", startup_log_path.display()),
-        )
-    })?;
-    let startup_stderr = startup_stdout.try_clone().map_err(|error| {
-        DomainError::new(ErrorCode::StorageError, format!("startup log: {error}"))
-    })?;
-    let mut cmd = std::process::Command::new(bin);
-    cmd.arg("serve")
-        .arg("--data-dir")
-        .arg(&cfg.data_dir)
-        .env("HUNTPROXY_DAEMONIZED", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(startup_stdout))
-        .stderr(Stdio::from(startup_stderr));
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-    }
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| DomainError::new(ErrorCode::Unavailable, format!("auto-start failed: {e}")))?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        if daemon_get(cfg, "/api/v1/health").await.is_ok() {
-            return Ok(());
-        }
-    }
-    let detail = read_log_tail(&startup_log_path, 4 * 1024)
-        .filter(|output| !output.trim().is_empty())
-        .map(|output| format!("\nlast startup output:\n{}", output.trim_end()))
-        .unwrap_or_default();
-    Err(DomainError::new(
-        ErrorCode::Unavailable,
-        format!(
-            "daemon did not become ready; check {}{detail}",
-            startup_log_path.display()
-        ),
-    ))
+    app::ensure_daemon(cfg).await
 }
-
 async fn daemon_get(cfg: &Config, path: &str) -> DomainResult<String> {
     let url = format!("http://{}{path}", cfg.api_listen);
     let client = reqwest_get(&url).await?;

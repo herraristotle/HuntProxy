@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>HuntProxy — Web security workbench for AI agents</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23326cf4'/%3E%3Cpath d='M8 8v16m16-16v16M8 16h16' stroke='white' stroke-width='4'/%3E%3C/svg%3E" />
   <style>
     :root {
       color-scheme: light dark;
@@ -245,11 +246,15 @@
       <textarea id="cookieValue" class="mono" style="min-height:70px" placeholder='session=...; csrf=...  or  [{"name":"session","value":"...","domain":".example.com"}]'></textarea>
       <label for="cookieFile">Or load a cookie file</label>
       <input id="cookieFile" type="file" accept=".txt,.json,text/plain,application/json" />
+      <label for="cookieProfileName">Named profile <span class="muted">(optional)</span></label>
+      <input id="cookieProfileName" list="namedCookieNames" placeholder="member" autocomplete="off" />
+      <datalist id="namedCookieNames"></datalist>
       <div class="row" style="margin-top:.4rem">
         <button class="btn primary" id="setCookies">Set</button>
         <button class="btn" id="clearCookies">Clear</button>
       </div>
-      <p class="small muted">JSON exports are filtered for the target domain and retain browser cookie rules. Values stay hidden. Applies to Reply, Fuzzer, Raw opt-in, and Browser.</p>
+      <p class="small muted">Leave the name empty for the project default. Named imports can be selected in Reply, Fuzzer, or as an explicit seed for the same-named browser profile. Cookie values stay hidden.</p>
+      <div class="stack small" id="namedCookieProfiles"></div>
       <div class="status" id="cookieStatus"></div>
 
       <h3>Proxy credential</h3>
@@ -457,6 +462,11 @@
             <div><label for="replyProtocol">Protocol</label><select id="replyProtocol"><option value="auto">Auto</option><option value="h1">HTTP/1.1</option><option value="h2">HTTP/2</option></select></div>
           </div>
           <label for="replyUrl">URL</label><input id="replyUrl" placeholder="https://example.com/path" />
+          <div class="detail-grid">
+            <div><label for="replyIdentityMode">Request identity</label><select id="replyIdentityMode"><option value="default">Project default</option><option value="named">Named cookie profile</option><option value="anonymous">Anonymous</option></select></div>
+            <div id="replyIdentityProfileField" class="hidden"><label for="replyIdentityProfile">Cookie profile name</label><input id="replyIdentityProfile" list="namedCookieNames" placeholder="member" /></div>
+          </div>
+          <p class="small muted">Named profiles replace inherited credentials; explicit Authorization overrides remain. Anonymous removes credentials. Selection leaves the browser and project cookie jar unchanged.</p>
           <label for="replyBodyFormat">Body format</label>
           <select id="replyBodyFormat"><option value="raw">Raw</option><option value="json">JSON</option><option value="xml">XML</option><option value="form_urlencoded">x-www-form-urlencoded</option><option value="multipart">multipart/form-data</option></select>
           <p class="small muted">For form formats, enter one <code>name=value</code> field per line. Content-Type is updated automatically.</p>
@@ -565,7 +575,17 @@ test
             <h2>Browser session</h2>
             <pre class="mono" id="browserInstallStatus">Checking runtime…</pre>
             <div class="card hidden" id="browserCurrent"></div>
+            <label for="browserProfile">Profile</label>
+            <div class="row">
+              <select id="browserProfile" aria-label="Browser profile"><option value="default">default</option></select>
+              <button class="btn fit" id="createBrowserProfile" type="button">New</button>
+              <button class="btn danger fit" id="deleteBrowserProfile" type="button" disabled>Delete</button>
+            </div>
             <label for="browserUrl">URL</label><input id="browserUrl" placeholder="https://app.example.com" />
+            <label for="browserCookieSeed">Cookie seed</label>
+            <select id="browserCookieSeed"><option value="">Keep this browser profile's cookies</option></select>
+            <label class="fit"><input type="checkbox" id="browserRefreshCookies" style="width:auto" disabled /> Reimport the selected seed</label>
+            <p class="small muted">A seed is explicit and must have the same name as the browser profile. Starting without one resumes the profile's existing cookie jar.</p>
             <div class="row">
               <button class="btn primary" id="startBrowser">Start Chromium</button>
               <button class="btn danger" id="stopBrowser" disabled>Stop</button>
@@ -575,11 +595,14 @@ test
           <div class="card">
             <h2>Action</h2>
             <label for="browserAction">Action</label>
-            <select id="browserAction"><option value="navigate">Navigate</option><option value="snapshot">Snapshot</option><option value="click">Click</option><option value="fill">Fill</option><option value="select">Select</option><option value="press">Press</option><option value="wait">Wait</option><option value="back">Back</option><option value="forward">Forward</option></select>
-            <label for="browserValue">URL / value / key / wait value</label><input id="browserValue" />
-            <label for="browserLocator">Locator JSON</label><textarea id="browserLocator" style="min-height:60px" placeholder='{"role":"button","name":"Log in"}'></textarea>
+            <select id="browserAction"><option value="navigate">Navigate</option><option value="snapshot">Snapshot</option><option value="click">Click</option><option value="fill">Fill</option><option value="select">Select</option><option value="press">Press</option><option value="wait">Wait</option><option value="upload">Upload</option><option value="inspect">Inspect runtime</option><option value="pages">Pages</option><option value="events">Events</option><option value="scroll">Scroll</option><option value="screenshot">Screenshot</option><option value="request">Same-origin request</option><option value="back">Back</option><option value="forward">Forward</option></select>
+            <label for="browserValue" id="browserValueLabel">URL / value / key / wait value</label><input id="browserValue" />
+            <label for="browserLocator">Locator JSON <span class="muted">(when applicable)</span></label><textarea id="browserLocator" style="min-height:60px" placeholder='{"role":"button","name":"Log in"}'></textarea>
+            <label for="browserParameters">Action options JSON</label><textarea id="browserParameters" style="min-height:85px" placeholder="{}"></textarea>
+            <p class="small muted" id="browserActionHint"></p>
             <button class="btn primary" id="runBrowserAction" disabled>Run action</button>
             <pre class="mono" id="browserOutput">—</pre>
+            <img id="browserScreenshot" class="hidden" alt="Browser screenshot result" style="display:block;max-width:100%;height:auto;border:1px solid var(--border);border-radius:7px" />
           </div>
         </div>
       </section>
@@ -639,6 +662,8 @@ test
       fuzzResultsMode: 'groups',
       selectedFuzzGroup: null,
       browserSession: null,
+      browserProfile: 'default',
+      namedCookieProfiles: [],
       websocketConnection: null,
       events: null,
       fuzzTimer: null,
@@ -730,6 +755,10 @@ test
       state.selectedExchange = null;
       state.selectedDetail = null;
       state.websocketConnection = null;
+      state.browserSession = null;
+      state.browserProfile = 'default';
+      browserSelectionChanged();
+      const browserSelection = browserContext();
       state.historyItems = [];
       state.historyCursor = null;
       state.historyTotal = 0;
@@ -746,7 +775,8 @@ test
       HuntFlows?.setProject(state.projectId);
       if (!state.projectId) { renderIpRotationProfiles([]); status('ipRotationStatus', 'Select a project.'); return; }
       try {
-        const project = await api(`/api/v1/projects/${state.projectId}`);
+        const project = await api(`/api/v1/projects/${browserSelection.projectId}`);
+        if (!isCurrentBrowserContext(browserSelection)) return;
         $('scopeHosts').value = (project.scope?.host_patterns || []).join(', ');
         $('scopeExcludedHosts').value = (project.scope?.excluded_host_patterns || []).join(', ');
         $('renameProjectName').value = project.name || '';
@@ -754,8 +784,10 @@ test
         $('cookieTarget').value = project.target_url || '';
         try { $('ipRotationTarget').value = new URL(project.target_url).origin; } catch (_) { $('ipRotationTarget').value = ''; }
       } catch (_) {}
+      if (!isCurrentBrowserContext(browserSelection)) return;
       $('cookieValue').value = '';
       $('cookieFile').value = '';
+      $('cookieProfileName').value = '';
       await Promise.allSettled([loadHistory(), loadSitemap(), loadRules(), loadFindings(), loadReplyTabs(), loadFuzzJobs(), loadWebSockets(), loadBrowserStatus(), loadCookies(), loadProjectUsage(), loadIpRotationStatus()]);
     }
 
@@ -956,12 +988,22 @@ test
     };
 
     async function loadCookies() {
-      if (!state.projectId) return;
-      const result = await api(`/api/v1/projects/${state.projectId}/cookies`);
+      const projectId = state.projectId;
+      if (!projectId) return;
+      const result = await api(`/api/v1/projects/${projectId}/cookies`);
+      if (projectId !== state.projectId) return;
       const profiles = result.profiles || [];
-      $('cookieStatus').textContent = profiles.length
+      state.namedCookieProfiles = result.named_profiles || [];
+      $('namedCookieNames').innerHTML = state.namedCookieProfiles
+        .map(({ name }) => `<option value="${escapeHtml(name)}"></option>`).join('');
+      $('namedCookieProfiles').innerHTML = state.namedCookieProfiles.length
+        ? state.namedCookieProfiles.map(({ name, profile }) => `<div class="card"><strong>${escapeHtml(name)}</strong><div class="muted">${escapeHtml(profile.host)} · ${escapeHtml((profile.names || []).join(', ') || 'no live cookies')}</div></div>`).join('')
+        : '<div class="muted">No named profiles.</div>';
+      updateBrowserCookieSeeds();
+      const managed = profiles.length
         ? profiles.map(profile => `${profile.host}: ${profile.names.join(', ')}`).join(' · ')
-        : 'No managed cookies.';
+        : 'No project-default cookies';
+      $('cookieStatus').textContent = `${managed}. ${state.namedCookieProfiles.length} named profile(s).`;
     }
 
     $('cookieFile').onchange = async event => {
@@ -975,26 +1017,39 @@ test
     $('setCookies').onclick = async () => {
       if (!state.projectId) return status('cookieStatus', 'Select a project', 'err');
       try {
+        const profileName = $('cookieProfileName').value.trim();
+        if (profileName && !/^[A-Za-z0-9_-]{1,64}$/.test(profileName)) throw new Error('Use 1-64 letters, numbers, _ or - for the profile name');
+        const body = { target_url: $('cookieTarget').value.trim(), cookie: $('cookieValue').value };
+        if (profileName) body.profile_name = profileName;
         const result = await api(`/api/v1/projects/${state.projectId}/cookies`, {
           method: 'PUT',
-          body: JSON.stringify({ target_url: $('cookieTarget').value.trim(), cookie: $('cookieValue').value }),
+          body: JSON.stringify(body),
         });
         $('cookieValue').value = '';
         $('cookieFile').value = '';
-        status('cookieStatus', `Cookies set for ${result.profile.host}; ${result.active_browser_sessions_updated} active browser session(s) updated`, 'ok');
+        await loadCookies();
+        status('cookieStatus', profileName
+          ? `Named profile ${profileName} imported for ${result.profile.host}`
+          : `Project cookies set for ${result.profile.host}; ${result.active_browser_sessions_updated} ephemeral browser session(s) updated`, 'ok');
       } catch (error) { status('cookieStatus', error.message, 'err'); }
     };
 
     $('clearCookies').onclick = async () => {
       if (!state.projectId) return status('cookieStatus', 'Select a project', 'err');
       try {
+        const profileName = $('cookieProfileName').value.trim();
+        if (profileName && !/^[A-Za-z0-9_-]{1,64}$/.test(profileName)) throw new Error('Use 1-64 letters, numbers, _ or - for the profile name');
         await api(`/api/v1/projects/${state.projectId}/cookies`, {
           method: 'DELETE',
-          body: JSON.stringify({ target_url: $('cookieTarget').value.trim() }),
+          body: JSON.stringify(profileName
+            ? { profile_name: profileName }
+            : { target_url: $('cookieTarget').value.trim() }),
         });
         $('cookieValue').value = '';
         $('cookieFile').value = '';
+        if (profileName) $('cookieProfileName').value = '';
         await loadCookies();
+        status('cookieStatus', profileName ? `Named profile ${profileName} cleared` : 'Project cookies cleared', 'ok');
       } catch (error) { status('cookieStatus', error.message, 'err'); }
     };
     $('newCredential').onclick = async () => {
@@ -1418,6 +1473,9 @@ test
       $('replyMethod').value = tab?.draft?.method || 'GET';
       $('replyUrl').value = tab?.draft?.url || '';
       $('replyProtocol').value = tab?.protocol || 'auto';
+      $('replyIdentityMode').value = tab?.draft?.identity?.mode || 'default';
+      $('replyIdentityProfile').value = tab?.draft?.identity?.profile || '';
+      $('replyIdentityProfileField').classList.toggle('hidden', $('replyIdentityMode').value !== 'named');
       $('replyHeaders').value = (tab?.draft?.header_overrides || []).map(h => `${h.name}: ${text(h.value)}`).join('\n');
       const format = tab?.draft?.body_format || 'raw';
       $('replyBodyFormat').value = format;
@@ -1448,7 +1506,8 @@ test
         method: $('replyMethod').value.trim() || null,
         url: $('replyUrl').value.trim() || null,
         header_overrides: overrides,
-        header_tombstones: [],
+        header_tombstones: [...(state.activeReplyTab?.draft?.header_tombstones || [])],
+        inheritance: state.activeReplyTab?.draft?.inheritance || 'full_request',
         body_override: null,
         body_text: null,
         body_json: null,
@@ -1456,6 +1515,14 @@ test
         body_params: [],
         body_cleared: clearBody,
       };
+      const identityMode = $('replyIdentityMode').value;
+      if (identityMode === 'named') {
+        const profile = $('replyIdentityProfile').value.trim();
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile)) throw new Error('Enter a cookie profile name using letters, numbers, underscores or hyphens');
+        draft.identity = { mode: 'named', profile };
+      } else if (identityMode === 'anonymous' || state.activeReplyTab?.draft?.identity?.mode === 'default') {
+        draft.identity = { mode: identityMode };
+      }
       if (clearBody) return draft;
       if (!bodyValue) {
         if (format === 'form_urlencoded') draft.body_format = format;
@@ -1487,6 +1554,7 @@ test
       await loadReplyTabs(tab.id);
       return tab;
     }
+    $('replyIdentityMode').onchange = () => $('replyIdentityProfileField').classList.toggle('hidden', $('replyIdentityMode').value !== 'named');
     $('saveReply').onclick = async () => {
       try { await saveReplyTab(); status('replyStatus', 'Tab saved', 'ok'); }
       catch (e) { status('replyStatus', e.message, 'err'); }
@@ -1752,67 +1820,214 @@ test
       } catch (error) { status('websocketStatus', error.message, 'err'); }
     };
 
+    let browserSelectionRevision = 0;
+    let browserStatusRequest = 0;
+    function browserContext() {
+      return { projectId: state.projectId, profile: state.browserProfile || 'default', revision: browserSelectionRevision };
+    }
+    function isCurrentBrowserContext(context) {
+      return context.projectId === state.projectId && context.profile === state.browserProfile && context.revision === browserSelectionRevision;
+    }
+    function browserSelectionChanged() {
+      browserSelectionRevision += 1;
+      state.browserSession = null;
+      $('startBrowser').disabled = !state.projectId;
+      $('stopBrowser').disabled = true;
+      $('runBrowserAction').disabled = true;
+      $('deleteBrowserProfile').disabled = true;
+      $('browserCurrent').classList.add('hidden');
+      $('browserOutput').textContent = '—';
+      $('browserScreenshot').classList.add('hidden');
+      $('browserScreenshot').removeAttribute('src');
+      updateBrowserCookieSeeds();
+    }
+    function updateBrowserCookieSeeds() {
+      const select = $('browserCookieSeed');
+      if (!select) return;
+      const previous = select.value;
+      const matching = state.namedCookieProfiles.find(({ name }) => name === (state.browserProfile || 'default'));
+      select.innerHTML = '<option value="">Keep this browser profile\'s cookies</option>' +
+        (matching ? `<option value="${escapeHtml(matching.name)}">Import named profile: ${escapeHtml(matching.name)}</option>` : '');
+      select.value = matching && previous === matching.name ? previous : '';
+      $('browserRefreshCookies').checked = false;
+      $('browserRefreshCookies').disabled = !select.value;
+    }
+    $('browserCookieSeed').onchange = event => {
+      $('browserRefreshCookies').checked = false;
+      $('browserRefreshCookies').disabled = !event.target.value;
+    };
+    function browserSessionMatches(session, profile) {
+      return (session.profile || 'default') === profile &&
+        (session.active_profile == null || session.active_profile === profile) &&
+        (session.requested_profile == null || session.requested_profile === profile);
+    }
     async function loadBrowserStatus() {
-      if (!state.projectId) return;
+      const context = browserContext();
+      if (!context.projectId) return;
+      const request = ++browserStatusRequest;
       try {
-        const result = await api(`/api/v1/projects/${state.projectId}/browser-sessions`);
+        const [result, profileResult] = await Promise.all([
+          api(`/api/v1/projects/${context.projectId}/browser-sessions`),
+          api(`/api/v1/projects/${context.projectId}/browser-profiles`),
+        ]);
+        if (!isCurrentBrowserContext(context) || request !== browserStatusRequest) return;
         $('browserInstallStatus').textContent = JSON.stringify(result.runtime, null, 2);
         const sessions = result.sessions || [];
-        state.browserSession = sessions.length ? sessions[sessions.length - 1] : null;
+        const profiles = profileResult.profiles || [];
+        const selected = state.browserProfile || $('browserProfile').value || 'default';
+        $('browserProfile').innerHTML = profiles.map(profile => `<option value="${escapeHtml(profile.name)}">${escapeHtml(profile.name)}${profile.active ? ' · active' : ''}</option>`).join('');
+        state.browserProfile = profiles.some(profile => profile.name === selected) ? selected : 'default';
+        if (state.browserProfile !== context.profile) browserSelectionChanged();
+        $('browserProfile').value = state.browserProfile;
+        state.browserSession = sessions.find(session => browserSessionMatches(session, state.browserProfile)) || null;
         const active = state.browserSession;
+        $('startBrowser').disabled = Boolean(active);
         $('stopBrowser').disabled = !active;
         $('runBrowserAction').disabled = !active;
+        $('deleteBrowserProfile').disabled = state.browserProfile === 'default' || Boolean(active);
         $('browserCurrent').classList.toggle('hidden', !active);
         if (active) {
-          $('browserCurrent').innerHTML = `<strong>${escapeHtml(active.current_title || 'Untitled page')}</strong><div class="small muted">${escapeHtml(active.engine)} · session ${active.id}</div><div class="small" style="margin-top:.35rem;overflow-wrap:anywhere">${escapeHtml(active.current_url || 'No current URL')}</div>`;
+          $('browserCurrent').innerHTML = `<strong>${escapeHtml(active.current_title || 'Untitled page')}</strong><div class="small muted">${escapeHtml(active.profile || 'default')} · ${escapeHtml(active.engine)} · session ${active.id}</div><div class="small" style="margin-top:.35rem;overflow-wrap:anywhere">${escapeHtml(active.current_url || 'No current URL')}</div>`;
           $('browserUrl').value = active.current_url || $('browserUrl').value;
-          status('browserStatus', `Session ${active.id} active with ${active.engine}`, 'ok');
+          status('browserStatus', `${state.browserProfile} is active as session ${active.id}`, 'ok');
+        } else {
+          status('browserStatus', `${state.browserProfile} is stopped`);
         }
       }
-      catch (e) { $('browserInstallStatus').textContent = e.message; }
+      catch (e) { if (isCurrentBrowserContext(context) && request === browserStatusRequest) $('browserInstallStatus').textContent = e.message; }
     }
     async function startBrowserSession() {
-      if (!state.projectId) return status('browserStatus', 'Select a project', 'err');
-      const session = await api(`/api/v1/projects/${state.projectId}/browser-sessions`, { method: 'POST', body: JSON.stringify({ url: $('browserUrl').value.trim() }) });
+      const context = browserContext();
+      if (!context.projectId) throw new Error('Select a project');
+      const url = $('browserUrl').value.trim();
+      const body = { profile: context.profile };
+      if (url) body.url = url;
+      if ($('browserCookieSeed').value) {
+        body.cookie_profile = $('browserCookieSeed').value;
+        body.refresh_cookies = $('browserRefreshCookies').checked;
+      }
+      const session = await api(`/api/v1/projects/${context.projectId}/browser-sessions`, { method: 'POST', body: JSON.stringify(body) });
+      if (!browserSessionMatches(session, context.profile)) throw new Error(`Browser profile mismatch: requested ${context.profile}, received ${session.active_profile || session.profile || 'default'}`);
+      if (!isCurrentBrowserContext(context)) return session;
       state.browserSession = session; $('stopBrowser').disabled = false; $('runBrowserAction').disabled = false;
-      status('browserStatus', `Session ${session.id} running with ${session.engine}`, 'ok');
+      status('browserStatus', `${session.profile || 'default'} is running as session ${session.id}`, 'ok');
       $('browserOutput').textContent = JSON.stringify(session, null, 2);
       await loadBrowserStatus();
       return session;
     }
+    $('browserProfile').onchange = async event => {
+      state.browserProfile = event.target.value || 'default';
+      browserSelectionChanged();
+      await loadBrowserStatus();
+    };
+    $('createBrowserProfile').onclick = async () => {
+      if (!state.projectId) return status('browserStatus', 'Select a project', 'err');
+      const context = browserContext();
+      const profile = window.prompt('New browser profile name (letters, numbers, _ or -):');
+      if (profile == null) return;
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(profile)) return status('browserStatus', 'Use 1-64 letters, numbers, _ or -', 'err');
+      try {
+        await api(`/api/v1/projects/${context.projectId}/browser-profiles`, { method: 'POST', body: JSON.stringify({ profile }) });
+        if (!isCurrentBrowserContext(context)) return;
+        state.browserProfile = profile;
+        browserSelectionChanged();
+        await loadBrowserStatus();
+      } catch (e) { if (isCurrentBrowserContext(context)) status('browserStatus', e.message, 'err'); }
+    };
+    $('deleteBrowserProfile').onclick = async () => {
+      const context = browserContext();
+      const profile = state.browserProfile;
+      if (!state.projectId || profile === 'default' || state.browserSession) return;
+      if (!window.confirm(`Delete browser profile ${profile} and all of its saved browser state?`)) return;
+      try {
+        await api(`/api/v1/projects/${context.projectId}/browser-profiles/${encodeURIComponent(profile)}`, { method: 'DELETE' });
+        if (!isCurrentBrowserContext(context)) return;
+        state.browserProfile = 'default';
+        browserSelectionChanged();
+        await loadBrowserStatus();
+      } catch (e) { if (isCurrentBrowserContext(context)) status('browserStatus', e.message, 'err'); }
+    };
     $('startBrowser').onclick = async () => {
+      const context = browserContext();
       $('startBrowser').disabled = true;
       status('browserStatus', 'Starting Chromium…');
       try { await startBrowserSession(); }
-      catch (e) { status('browserStatus', e.message, 'err'); }
-      finally { $('startBrowser').disabled = false; }
+      catch (e) { if (isCurrentBrowserContext(context)) status('browserStatus', e.message, 'err'); }
+      finally { if (isCurrentBrowserContext(context)) $('startBrowser').disabled = Boolean(state.browserSession); }
     };
     $('stopBrowser').onclick = async () => {
       if (!state.browserSession) return;
+      const context = browserContext();
+      const session = state.browserSession;
       try {
-        await api(`/api/v1/projects/${state.projectId}/browser-sessions/${state.browserSession.id}/stop`, { method: 'POST' });
+        await api(`/api/v1/projects/${context.projectId}/browser-sessions/${session.id}/stop`, { method: 'POST' });
+        if (!isCurrentBrowserContext(context) || state.browserSession?.id !== session.id) return;
         state.browserSession = null; $('stopBrowser').disabled = true; $('runBrowserAction').disabled = true;
         status('browserStatus', 'Session stopped', 'ok');
-      } catch (e) { status('browserStatus', e.message, 'err'); }
+        await loadBrowserStatus();
+      } catch (e) { if (isCurrentBrowserContext(context)) status('browserStatus', e.message, 'err'); }
     };
+    const browserActionHelp = {
+      navigate: ['URL', 'https://app.example.com/path', '{}', 'Navigate the active page.'],
+      snapshot: ['Value (unused)', '', '{"format":"accessibility","max_bytes":262144}', 'Capture an accessibility or DOM snapshot.'],
+      click: ['Value (unused)', '', '{}', 'Click the element described by the locator.'],
+      fill: ['Text to fill', 'Ada Lovelace', '{}', 'Fill the located field.'],
+      select: ['Option value', 'active', '{}', 'Select an option by value.'],
+      press: ['Key', 'Enter', '{}', 'Press a key, optionally on the located element.'],
+      wait: ['Wait value', '#ready', '{"for_what":"selector"}', 'Wait for timeout, URL, selector, text, or load_state.'],
+      upload: ['Absolute file paths (one per line)', '/tmp/artis/document.pdf', '{"via_chooser":false,"timeout_ms":10000}', 'Select local server files through an input or file chooser.'],
+      inspect: ['Value (unused)', '', '{"max_bytes":4096}', 'Read bounded runtime metadata, optionally for the located element.'],
+      pages: ['Value (unused)', '', '{"op":"list"}', 'List, open, select, or close tabs. Select and close also need page_id and runtime_generation.'],
+      events: ['Value (unused)', '', '{"after_sequence":0,"limit":50,"kinds":[],"wait_ms":0}', 'Read bounded browser events with an optional long-poll wait.'],
+      scroll: ['Value (unused)', '', '{"delta_y":640}', 'Scroll by a bounded delta or bring the located element into view.'],
+      screenshot: ['Value (unused)', '', '{"full_page":false,"max_bytes":4194304}', 'Capture the page or located element as PNG.'],
+      request: ['Same-origin URL', 'https://app.example.com/api/me', '{"method":"GET","headers":[],"timeout_ms":15000,"max_response_bytes":4096}', 'Send one normal same-origin browser request with redirects disabled.'],
+      back: ['Value (unused)', '', '{}', 'Go back in the active tab.'],
+      forward: ['Value (unused)', '', '{}', 'Go forward in the active tab.'],
+    };
+    function updateBrowserActionForm() {
+      const [label, placeholder, parameters, hint] = browserActionHelp[$('browserAction').value];
+      $('browserValueLabel').textContent = label;
+      $('browserValue').placeholder = placeholder;
+      $('browserParameters').value = parameters;
+      $('browserActionHint').textContent = hint;
+    }
+    $('browserAction').onchange = updateBrowserActionForm;
+    updateBrowserActionForm();
+
     $('runBrowserAction').onclick = async () => {
       if (!state.browserSession) return;
+      const context = browserContext();
+      const session = state.browserSession;
+      $('runBrowserAction').disabled = true;
       try {
         const type = $('browserAction').value; const value = $('browserValue').value;
         let locator = null;
         if ($('browserLocator').value.trim()) locator = JSON.parse($('browserLocator').value);
-        let action;
-        if (type === 'navigate') action = { type, url: value || $('browserUrl').value };
-        else if (type === 'snapshot') action = { type, format: 'accessibility', max_bytes: 262144 };
-        else if (type === 'click') action = { type, locator };
-        else if (type === 'fill' || type === 'select') action = { type, locator, value };
-        else if (type === 'press') action = { type, locator, key: value };
-        else if (type === 'wait') action = { type, for_what: 'selector', value };
-        else action = { type };
-        const result = await api(`/api/v1/projects/${state.projectId}/browser-sessions/${state.browserSession.id}/action`, { method: 'POST', body: JSON.stringify(action) });
-        $('browserOutput').textContent = JSON.stringify(result, null, 2); status('browserStatus', result.message || 'Action complete', result.ok ? 'ok' : 'err');
+        const parameters = $('browserParameters').value.trim() ? JSON.parse($('browserParameters').value) : {};
+        if (!parameters || Array.isArray(parameters) || typeof parameters !== 'object') throw new Error('Action options must be a JSON object');
+        const action = { ...parameters, type };
+        if (type === 'navigate') action.url = value || $('browserUrl').value;
+        else if (type === 'click') action.locator = locator;
+        else if (type === 'fill' || type === 'select') { action.locator = locator; action.value = value; }
+        else if (type === 'press') { action.locator = locator; action.key = value; }
+        else if (type === 'wait') action.value = value;
+        else if (type === 'upload') { action.locator = locator; action.files = value.split('\n').map(path => path.trim()).filter(Boolean); }
+        else if (type === 'request') action.url = value;
+        else if (['inspect', 'scroll', 'screenshot'].includes(type) && locator) action.locator = locator;
+        const result = await api(`/api/v1/projects/${context.projectId}/browser-sessions/${session.id}/action`, { method: 'POST', body: JSON.stringify(action) });
+        if (!isCurrentBrowserContext(context) || state.browserSession?.id !== session.id) return;
+        const screenshot = result.data?.image_base64;
+        $('browserScreenshot').classList.toggle('hidden', !screenshot);
+        if (screenshot) $('browserScreenshot').src = `data:image/png;base64,${screenshot}`;
+        else $('browserScreenshot').removeAttribute('src');
+        const output = screenshot
+          ? { ...result, data: { ...result.data, image_base64: '[rendered below]' } }
+          : result;
+        $('browserOutput').textContent = JSON.stringify(output, null, 2); status('browserStatus', result.message || 'Action complete', result.ok ? 'ok' : 'err');
         await loadBrowserStatus();
-      } catch (e) { status('browserStatus', e.message, 'err'); }
+      } catch (e) { if (isCurrentBrowserContext(context)) status('browserStatus', e.message, 'err'); }
+      finally { if (isCurrentBrowserContext(context) && state.browserSession?.id === session.id) $('runBrowserAction').disabled = false; }
     };
 
     $('runCodec').onclick = async () => {

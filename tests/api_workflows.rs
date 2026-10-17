@@ -126,6 +126,51 @@ async fn dynamic_api_responses_are_never_browser_cached() {
 }
 
 #[tokio::test]
+async fn project_event_stream_ends_promptly_on_shutdown() {
+    let (_directory, state, project_id) = test_state().await;
+    let response = huntproxy::api::router(state.clone())
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{}/events", project_id.get()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(http::header::CONTENT_TYPE).unwrap(),
+        "text/event-stream"
+    );
+
+    let mut body = response.into_body();
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(1), body.frame())
+        .await
+        .expect("ready event timed out")
+        .expect("event stream ended before ready")
+        .expect("ready event body failed");
+    let ready = std::str::from_utf8(ready.data_ref().expect("ready event was not data")).unwrap();
+    assert!(ready.contains("event: ready"));
+    assert!(ready.contains(&format!(r#"{{"project_id":{}}}"#, project_id.get())));
+
+    let next = body.frame();
+    tokio::pin!(next);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut next)
+            .await
+            .is_err(),
+        "idle event stream produced an unexpected frame"
+    );
+    state.shutdown.cancel();
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(1), &mut next)
+        .await
+        .expect("event stream did not observe shutdown promptly");
+    assert!(
+        ended.is_none(),
+        "event stream emitted a frame after shutdown"
+    );
+}
+
+#[tokio::test]
 async fn ip_rotation_status_is_visible_and_blocks_project_deletion_until_cleanup() {
     let (_directory, state, project_id) = test_state().await;
     let app = huntproxy::api::router(state.clone());
@@ -193,6 +238,158 @@ async fn ip_rotation_status_is_visible_and_blocks_project_deletion_until_cleanup
 }
 
 #[tokio::test]
+async fn browser_profile_api_manages_named_identities() {
+    let (_directory, state, project_id) = test_state().await;
+    let app = huntproxy::api::router(state);
+
+    let created = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/projects/{}/browser-profiles",
+                project_id.get()
+            ))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"profile":"account1"}"#))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = json_response(created).await;
+    assert_eq!(created["name"], "account1");
+    assert_eq!(created["active"], false);
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{}/browser-profiles",
+                project_id.get()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed = json_response(listed).await;
+    let names = listed["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|profile| profile["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["default", "account1"]);
+
+    let missing_cookie_profile = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/projects/{}/browser-sessions",
+                project_id.get()
+            ))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"profile":"missing","cookie_profile":"missing"}"#,
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_cookie_profile.status(), StatusCode::NOT_FOUND);
+    assert!(json_response(missing_cookie_profile).await["message"]
+        .as_str()
+        .unwrap()
+        .contains("cookie profile"));
+
+    for body in [
+        r#"{"profile":"account1","cookie_profile":"account2"}"#,
+        r#"{"profile":"account1","refresh_cookies":true}"#,
+    ] {
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/api/v1/projects/{}/browser-sessions",
+                    project_id.get()
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    }
+
+    let default_delete = app
+        .clone()
+        .oneshot(
+            Request::delete(format!(
+                "/api/v1/projects/{}/browser-profiles/default",
+                project_id.get()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(default_delete.status(), StatusCode::BAD_REQUEST);
+
+    let deleted = app
+        .oneshot(
+            Request::delete(format!(
+                "/api/v1/projects/{}/browser-profiles/account1",
+                project_id.get()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn deleting_project_removes_all_named_browser_profiles() {
+    let (directory, state, project_id) = test_state().await;
+    state
+        .browser
+        .create_browser_profile(project_id, "account1")
+        .await
+        .unwrap();
+    state
+        .browser
+        .create_browser_profile(project_id, "account2")
+        .await
+        .unwrap();
+    let project_profiles = directory
+        .path()
+        .join("browser-profiles/projects")
+        .join(project_id.get().to_string());
+    assert!(project_profiles.join("profiles/account1").is_dir());
+    assert!(project_profiles.join("profiles/account2").is_dir());
+
+    let deleted = huntproxy::api::router(state.clone())
+        .oneshot(
+            Request::delete(format!("/api/v1/projects/{}", project_id.get()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    assert!(!project_profiles.exists());
+    assert!(state
+        .browser
+        .create_browser_profile(project_id, "late-profile")
+        .await
+        .is_err());
+    assert!(!project_profiles.exists());
+}
+
+#[tokio::test]
 async fn browser_cdp_api_reports_control_state_and_validates_session_requirements() {
     let (_directory, state, project_id) = test_state().await;
     let app = huntproxy::api::router(state);
@@ -226,6 +423,183 @@ async fn browser_cdp_api_reports_control_state_and_validates_session_requirement
         .as_str()
         .unwrap()
         .contains("session_id"));
+}
+
+#[tokio::test]
+async fn browser_resource_status_is_additive_in_mcp_and_api() {
+    let (_directory, state, project_id) = test_state().await;
+    let expected = serde_json::json!({
+        "project_id": project_id,
+        "max_concurrent_browsers": 2,
+        "active_persistent": 0,
+        "active_ephemeral": 0,
+        "available_capacity": 2,
+        "cdp_port_in_use": false,
+        "sessions": [],
+    });
+    let mcp = huntproxy::mcp::call_tool(
+        state.clone(),
+        "browser_manage",
+        serde_json::json!({"project_id": project_id, "op": "status"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        mcp,
+        serde_json::json!({"sessions": [], "resources": expected})
+    );
+
+    let app = huntproxy::api::router(state.clone());
+    let response = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{}/browser-sessions",
+                project_id.get()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let api = json_response(response).await;
+    assert_eq!(api["sessions"], serde_json::json!([]));
+    assert_eq!(api["resources"], expected);
+    assert_eq!(
+        api["runtime"],
+        serde_json::to_value(state.browser.status()).unwrap()
+    );
+
+    // Single-session status retains its existing BrowserSession payload,
+    // including historical stopped sessions, without a resources envelope.
+    let session = state
+        .db
+        .create_browser_session(project_id, Some("default".into()))
+        .await
+        .unwrap();
+    let mut session = session;
+    session.state = BrowserSessionState::Stopped;
+    state.db.update_browser_session(&session).await.unwrap();
+    let session = state
+        .db
+        .get_browser_session(project_id, session.id)
+        .await
+        .unwrap();
+    let single = huntproxy::mcp::call_tool(
+        state,
+        "browser_manage",
+        serde_json::json!({"project_id": project_id, "op": "status", "session_id": session.id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(single, serde_json::to_value(session).unwrap());
+    assert!(single.get("resources").is_none());
+}
+
+#[tokio::test]
+async fn history_query_errors_explain_repairs_without_returning_items() {
+    let (_directory, state, project_id) = test_state().await;
+    state
+        .db
+        .insert_exchange(exchange(project_id, "GET", "/monthly-report"))
+        .await
+        .unwrap();
+    let app = huntproxy::api::router(state);
+    for (query, repair) in [
+        ("time:>1970-01-01T00:00:00Z", "time>VALUE"),
+        ("status:>=400", "status>=VALUE"),
+        ("started_at>1970-01-01T00:00:00Z", "use time"),
+        ("method:GET OR", "require a following term"),
+        ("request:monthly", "request:~text"),
+        (r#"path:~"monthly report"#, "close the double quote"),
+    ] {
+        let encoded = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("q", query)
+            .finish();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/projects/{}/history?{encoded}",
+                    project_id.get()
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+        let error = json_response(response).await;
+        assert_eq!(error["code"], "invalid_argument");
+        assert_eq!(error["details"]["kind"], "history_query");
+        assert!(
+            error["message"].as_str().unwrap().contains(repair),
+            "{error}"
+        );
+        assert!(error.get("items").is_none());
+        assert!(error.get("total").is_none());
+    }
+    let corrected = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{}/history?q=time%3E1970-01-01T00%3A00%3A00Z",
+                project_id.get()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(corrected.status(), StatusCode::OK);
+    let corrected = json_response(corrected).await;
+    assert_eq!(corrected["items"].as_array().unwrap().len(), 1);
+    assert_eq!(corrected["total"], 1);
+}
+
+#[tokio::test]
+async fn mcp_history_query_validation_never_broadens_invalid_queries() {
+    let (_directory, state, project_id) = test_state().await;
+    for method in ["GET", "POST"] {
+        state
+            .db
+            .insert_exchange(exchange(project_id, method, "/monthly-report"))
+            .await
+            .unwrap();
+    }
+    for invalid in [
+        serde_json::json!(100),
+        serde_json::json!({"field": "method", "value": "GET"}),
+        serde_json::json!(["method:GET"]),
+        serde_json::json!(true),
+        serde_json::Value::Null,
+    ] {
+        let error = huntproxy::mcp::call_tool(
+            state.clone(),
+            "history_search",
+            serde_json::json!({"project_id": project_id.get(), "q": invalid}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidArgument);
+        assert!(error.to_string().contains("q must be a query string"));
+        assert_eq!(
+            ErrorEnvelope::from(&error).details.unwrap()["kind"],
+            "history_query"
+        );
+    }
+    for args in [
+        serde_json::json!({"project_id": project_id.get()}),
+        serde_json::json!({"project_id": project_id.get(), "q": "  "}),
+        serde_json::json!({"project_id": project_id.get(), "q": "method:GET"}),
+    ] {
+        let expected = if args["q"] == "method:GET" { 1 } else { 2 };
+        let result = huntproxy::mcp::call_tool(state.clone(), "history_search", args)
+            .await
+            .unwrap();
+        assert_eq!(result["items"].as_array().unwrap().len(), expected);
+        assert_eq!(result["saved_only"], true);
+        assert_eq!(result["noise_filtered"], false);
+    }
 }
 
 #[tokio::test]
@@ -535,6 +909,7 @@ async fn page_analyzer_extracts_saved_response_findings_through_http_api() {
     captured.mime = Some("application/javascript".into());
     captured.response_body = Some(
         br#"const route = '/api/v1/profile';
+            const detail = '/api/v1/profile/:user_id?include=summary';
             const docs = 'https://docs.example.test/Program Terms.pdf';
             const email = 'security@example.test';"#
             .to_vec(),
@@ -557,7 +932,10 @@ async fn page_analyzer_extracts_saved_response_findings_through_http_api() {
     let analysis = json_response(response).await;
     assert_eq!(
         analysis["endpoints"],
-        serde_json::json!(["/api/v1/profile"])
+        serde_json::json!([
+            "/api/v1/profile",
+            "/api/v1/profile/:user_id?include=summary"
+        ])
     );
     assert_eq!(
         analysis["urls"],
@@ -567,6 +945,301 @@ async fn page_analyzer_extracts_saved_response_findings_through_http_api() {
         analysis["emails"],
         serde_json::json!(["security@example.test"])
     );
+    assert_eq!(
+        analysis["parameters"],
+        serde_json::json!(["include", "user_id"])
+    );
+    assert_eq!(analysis["stats"]["parameters"], 2);
+    assert_eq!(analysis["completion"], "complete");
+    assert_eq!(analysis["status_code"], 200);
+    assert_eq!(analysis["content_type"], "application/javascript");
+    assert_eq!(analysis["body_truncated"], false);
+    assert_eq!(analysis["analysis_incomplete"], false);
+}
+
+#[tokio::test]
+async fn page_analyzer_qualifies_incomplete_saved_roots() {
+    let (_directory, state, project_id) = test_state().await;
+
+    for completion in [CompletionState::Timeout, CompletionState::Interrupted] {
+        let mut captured = exchange(project_id, "GET", "/partial.js");
+        captured.mime = Some("text/javascript".into());
+        captured.status_code = Some(206);
+        captured.completion = completion;
+        captured.response_body = Some(b"fetch('/api/partial');".to_vec());
+        let exchange_id = state.db.insert_exchange(captured).await.unwrap();
+
+        let result = huntproxy::mcp::call_tool(
+            state.clone(),
+            "page_analyzer",
+            serde_json::json!({
+                "project_id": project_id.get(),
+                "exchange_id": exchange_id.get()
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["body_truncated"], true);
+        assert_eq!(result["analysis_incomplete"], true);
+        assert_eq!(
+            result["completion"],
+            serde_json::to_value(completion).unwrap()
+        );
+        assert_eq!(result["status_code"], 206);
+        assert_eq!(result["content_type"], "text/javascript");
+        assert_eq!(result["endpoints"], serde_json::json!(["/api/partial"]));
+    }
+}
+
+#[tokio::test]
+async fn mcp_page_analyzer_fetches_and_captures_same_origin_manifest_bundles() {
+    use axum::routing::get;
+    use std::sync::{Arc, Mutex};
+
+    std::fs::create_dir_all("/tmp/artis").unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix("hp-page-analyzer-")
+        .tempdir_in("/tmp/artis")
+        .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let root_body = r#"
+        <input name="csrf_token">
+        <script>
+          window._MODERNJS_ROUTE_MANIFEST = {"routeAssets": {
+            "album-cover/page": {"assets": [
+              "static/js/async/page.js", "static/js/async/http-error.js",
+              "static/js/async/html.js", "static/css/async/page.css"
+            ]}
+          }};
+        </script>
+    "#;
+
+    let root_seen = Arc::clone(&seen);
+    let app_body = root_body.to_string();
+    let app = axum::Router::new()
+        .route(
+            "/",
+            get(move || {
+                let seen = Arc::clone(&root_seen);
+                let body = app_body.clone();
+                async move {
+                    seen.lock().unwrap().push("/".to_string());
+                    ([(http::header::CONTENT_TYPE, "text/html")], body)
+                }
+            }),
+        )
+        .route(
+            "/rewritten/nested/page.js",
+            get({
+                let seen = Arc::clone(&seen);
+                move || {
+                    let seen = Arc::clone(&seen);
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push("/rewritten/nested/page.js".to_string());
+                        (
+                            [(http::header::CONTENT_TYPE, "text/plain")],
+                            "<script src=\"./child.js\"></script>",
+                        )
+                    }
+                }
+            }),
+        )
+        .route(
+            "/rewritten/nested/child.js",
+            get({
+                let seen = Arc::clone(&seen);
+                move || {
+                    let seen = Arc::clone(&seen);
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push("/rewritten/nested/child.js".to_string());
+                        (
+                            [(http::header::CONTENT_TYPE, "text/plain")],
+                            "fetch('/api/v1/users/:user_id?include=teams');",
+                        )
+                    }
+                }
+            }),
+        )
+        .route(
+            "/static/js/async/http-error.js",
+            get({
+                let seen = Arc::clone(&seen);
+                move || {
+                    let seen = Arc::clone(&seen);
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push("/static/js/async/http-error.js".to_string());
+                        (
+                            StatusCode::NOT_FOUND,
+                            [(http::header::CONTENT_TYPE, "text/html")],
+                            "<html>missing /api/not-real</html>",
+                        )
+                    }
+                }
+            }),
+        )
+        .route(
+            "/static/js/async/html.js",
+            get({
+                let seen = Arc::clone(&seen);
+                move || {
+                    let seen = Arc::clone(&seen);
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push("/static/js/async/html.js".to_string());
+                        (
+                            [(http::header::CONTENT_TYPE, "text/html")],
+                            "<html>error /api/also-not-real</html>",
+                        )
+                    }
+                }
+            }),
+        )
+        .route(
+            "/static/css/async/page.css",
+            get({
+                let seen = Arc::clone(&seen);
+                move || {
+                    let seen = Arc::clone(&seen);
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push("/static/css/async/page.css".to_string());
+                        ([(http::header::CONTENT_TYPE, "text/css")], "body {}")
+                    }
+                }
+            }),
+        );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let config = Config {
+        data_dir: directory.path().to_path_buf(),
+        spool_dir: directory.path().join("spool"),
+        export_dir: directory.path().join("exports"),
+        runtime_dir: directory.path().join("runtime"),
+        plugin_dir: directory.path().join("plugins"),
+        browser_worker_path: Some(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("browser-worker")
+                .join("index.js"),
+        ),
+        ..Config::default()
+    };
+    let state = bootstrap_state(config).await.unwrap();
+    let project = state
+        .db
+        .create_project(CreateProjectRequest {
+            name: "Page analyzer manifest integration".into(),
+            target_url: format!("http://{address}/"),
+            advanced: None,
+        })
+        .await
+        .unwrap();
+    state
+        .db
+        .create_request_rule(
+            project.id,
+            huntproxy::request_rules::RequestRuleInput {
+                name: "serve nested bundle fixture".into(),
+                enabled: true,
+                position: 0,
+                host_pattern: Some("127.0.0.1".into()),
+                target: huntproxy::request_rules::RequestRuleTarget::Url,
+                operation: huntproxy::request_rules::RequestRuleOperation::Replace,
+                header_name: None,
+                match_kind: huntproxy::request_rules::RequestRuleMatchKind::Literal,
+                pattern: format!("http://{address}/static/js/async/page.js"),
+                replacement: Some(format!("http://{address}/rewritten/nested/page.js")),
+                replace_all: true,
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = huntproxy::mcp::call_tool(
+        state.clone(),
+        "page_analyzer",
+        serde_json::json!({
+            "project_id": project.id.get(),
+            "url": format!("http://{address}/")
+        }),
+    )
+    .await
+    .unwrap();
+    let saved_result = huntproxy::mcp::call_tool(
+        state.clone(),
+        "page_analyzer",
+        serde_json::json!({
+            "project_id": project.id.get(),
+            "exchange_id": result["exchange_id"].as_i64().unwrap()
+        }),
+    )
+    .await
+    .unwrap();
+    server.abort();
+    let _ = server.await;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            "/",
+            "/rewritten/nested/page.js",
+            "/static/js/async/http-error.js",
+            "/static/js/async/html.js",
+            "/rewritten/nested/child.js",
+            "/rewritten/nested/page.js",
+            "/static/js/async/http-error.js",
+            "/static/js/async/html.js",
+            "/rewritten/nested/child.js",
+        ]
+    );
+    assert_eq!(
+        result["js_bundles"],
+        serde_json::json!([
+            format!("http://{address}/static/js/async/page.js"),
+            format!("http://{address}/static/js/async/http-error.js"),
+            format!("http://{address}/static/js/async/html.js"),
+            format!("http://{address}/rewritten/nested/child.js"),
+        ])
+    );
+    assert_eq!(result["js_bundle_failures"], 2);
+    assert_eq!(result["analysis_incomplete"], true);
+    assert_eq!(result["status_code"], 200);
+    assert_eq!(result["content_type"], "text/html");
+    assert_eq!(
+        result["parameters"],
+        serde_json::json!(["csrf_token", "include", "user_id"])
+    );
+    assert_eq!(
+        saved_result["parameters"],
+        serde_json::json!(["csrf_token", "include", "user_id"])
+    );
+    let (history, _) = state
+        .db
+        .list_history(project.id, 20, None, None)
+        .await
+        .unwrap();
+    let captured_paths = history
+        .iter()
+        .map(|exchange| exchange.path.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert!(captured_paths.contains("/"));
+    assert!(captured_paths.contains("/rewritten/nested/page.js"));
+    assert!(captured_paths.contains("/rewritten/nested/child.js"));
+    assert!(captured_paths.contains("/static/js/async/http-error.js"));
+    assert!(captured_paths.contains("/static/js/async/html.js"));
+    assert!(!captured_paths.contains("/static/css/async/page.css"));
 }
 
 #[tokio::test]
@@ -1416,4 +2089,295 @@ async fn raw_reply_preserves_framing_and_collects_response_sequences() {
         .unwrap()
         .starts_with("HTTP/1.1 200 OK\r\n"));
     server.abort();
+}
+
+#[tokio::test]
+async fn identity_selectors_reject_misplaced_fields_before_dispatch() {
+    let (_directory, state, project_id) = test_state().await;
+    let selection = serde_json::json!({"mode":"anonymous"});
+    let template = serde_json::json!({
+        "draft":{"url":"http://127.0.0.1:1/?month=§month§"},
+        "insertion_points":[{"name":"month","location":"url"}],
+        "wordlists":[["october"]]
+    });
+    for (tool, args) in [
+        (
+            "reply_send",
+            serde_json::json!({"project_id":project_id,"identity":selection}),
+        ),
+        (
+            "reply_tabs",
+            serde_json::json!({"project_id":project_id,"action":"create","identity":selection}),
+        ),
+        (
+            "fuzz_start",
+            serde_json::json!({"project_id":project_id,"identity":selection,"template":template}),
+        ),
+        (
+            "fuzz_start",
+            serde_json::json!({"project_id":project_id,"template":{
+                "identity":selection,
+                "draft":{"url":"http://127.0.0.1:1/?month=§month§"},
+                "insertion_points":[{"name":"month","location":"url"}],
+                "wordlists":[["october"]]
+            }}),
+        ),
+    ] {
+        let error = huntproxy::mcp::call_tool(state.clone(), tool, args)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidArgument);
+        assert!(error.to_string().contains("under"));
+    }
+    let app = huntproxy::api::router(state.clone());
+    for (route, body) in [
+        ("reply-send", serde_json::json!({"identity":selection})),
+        (
+            "reply-tabs",
+            serde_json::json!({"name":"Monthly summary","draft":{},"identity":selection}),
+        ),
+        (
+            "fuzz-jobs",
+            serde_json::json!({"template":template,"identity":selection}),
+        ),
+        (
+            "fuzz-jobs",
+            serde_json::json!({"template":{
+                "draft":{},"identity":selection,"insertion_points":[]
+            }}),
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/projects/{}/{route}", project_id.get()))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert!(state
+        .db
+        .list_fuzz_jobs(project_id)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(state
+        .db
+        .list_reply_tabs(project_id)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn raw_api_preserves_an_incomplete_response_as_error_evidence_without_retry() {
+    let (_directory, state, project_id) = test_state().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let received = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nok";
+    let server = tokio::spawn(async move {
+        let (mut connection, _) = listener.accept().await.unwrap();
+        let mut request = [0u8; 2048];
+        let _ = connection.read(&mut request).await.unwrap();
+        connection.write_all(received).await.unwrap();
+        connection.shutdown().await.unwrap();
+    });
+    let response = huntproxy::api::router(state.clone()).oneshot(
+        Request::post(format!("/api/v1/projects/{}/reply-send-raw",project_id.get()))
+            .header("content-type","application/json")
+            .body(Body::from(serde_json::json!({
+                "target_url":format!("http://{address}/"),
+                "request":format!("GET / HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+            }).to_string())).unwrap()
+    ).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = json_response(response).await;
+    assert_eq!(result["status_code"], 200);
+    assert_eq!(result["response_complete"], false);
+    assert_eq!(result["truncated"], true);
+    let id = ExchangeId(result["exchange_id"].as_i64().unwrap());
+    let detail = state
+        .db
+        .get_exchange_detail(
+            project_id,
+            id,
+            huntproxy::policy::PresentationOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.summary.completion, CompletionState::ProtocolError);
+    let body = state
+        .db
+        .load_raw_body(project_id, id, MessageSide::Response)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(body, received);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn overview_reports_project_activity_and_empty_projects() {
+    let (_directory, state, project_id) = test_state().await;
+
+    let empty = huntproxy::mcp::call_tool(
+        state.clone(),
+        "overview",
+        serde_json::json!({"project_id": project_id.get()}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(empty["total_exchanges"], 0);
+    assert_eq!(empty["replies_sent"], 0);
+    assert_eq!(empty["findings"], 0);
+    assert_eq!(empty["unique_hosts"], 0);
+    assert_eq!(empty["last_activity_at"], serde_json::Value::Null);
+
+    let proxy_exchange = state
+        .db
+        .insert_exchange(exchange(project_id, "GET", "/proxy"))
+        .await
+        .unwrap();
+    let mut reply = exchange(project_id, "POST", "/reply");
+    reply.source = ExchangeSource::Reply;
+    reply.host = "api.example.com".into();
+    reply.authority = "api.example.com".into();
+    let reply_exchange = state.db.insert_exchange(reply).await.unwrap();
+    let mut fuzz = exchange(project_id, "GET", "/fuzz");
+    fuzz.source = ExchangeSource::Fuzzer;
+    fuzz.host = "EXAMPLE.com".into();
+    fuzz.authority = "EXAMPLE.com".into();
+    state.db.insert_exchange(fuzz).await.unwrap();
+
+    state
+        .db
+        .create_finding(
+            project_id,
+            reply_exchange,
+            "Unexpected profile access".into(),
+            "The captured reply returned another user's profile.".into(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .create_finding(
+            project_id,
+            proxy_exchange,
+            "Unexpected state change".into(),
+            "The request changed account settings without authorization.".into(),
+        )
+        .await
+        .unwrap();
+
+    let overview = huntproxy::mcp::call_tool(
+        state.clone(),
+        "overview",
+        serde_json::json!({"project_id": project_id.get()}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(overview["total_exchanges"], 3);
+    assert_eq!(overview["replies_sent"], 1);
+    assert_eq!(overview["findings"], 2);
+    assert_eq!(overview["unique_hosts"], 2);
+    assert_eq!(overview["exchanges_by_source"]["proxy"], 1);
+    assert_eq!(overview["exchanges_by_source"]["reply"], 1);
+    assert_eq!(overview["exchanges_by_source"]["fuzzer"], 1);
+    assert!(overview["last_activity_at"].is_string());
+
+    let missing = huntproxy::mcp::call_tool(
+        state,
+        "overview",
+        serde_json::json!({"project_id": project_id.get() + 999}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(missing.code(), ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn exchange_body_base64_pages_preserve_exact_request_bytes() {
+    let (_directory, state, project_id) = test_state().await;
+    let mut captured = exchange(project_id, "POST", "/binary");
+    let request_body = (0..=255).cycle().take(9000).collect::<Vec<u8>>();
+    captured.request_body = Some(request_body.clone());
+    let exchange_id = state.db.insert_exchange(captured).await.unwrap();
+
+    let first = huntproxy::mcp::call_tool(
+        state.clone(),
+        "exchange_body",
+        serde_json::json!({
+            "project_id": project_id.get(),
+            "exchange_id": exchange_id.get(),
+            "side": "request",
+            "max_bytes": 4096,
+            "encoding": "base64"
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(first["available"], true);
+    assert_eq!(first["encoding"], "base64");
+    assert_eq!(first["total"], request_body.len());
+    let first_bytes = base64::engine::general_purpose::STANDARD
+        .decode(first["preview"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(first_bytes, request_body[..4096]);
+    assert_eq!(first["truncated"], true);
+
+    let offset = first["next_offset"].as_u64().unwrap();
+    let second = huntproxy::mcp::call_tool(
+        state.clone(),
+        "exchange_body",
+        serde_json::json!({
+            "project_id": project_id.get(),
+            "exchange_id": exchange_id.get(),
+            "side": "request",
+            "offset": offset,
+            "max_bytes": 1048576,
+            "encoding": "base64"
+        }),
+    )
+    .await
+    .unwrap();
+    let second_bytes = base64::engine::general_purpose::STANDARD
+        .decode(second["preview"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(second_bytes, request_body[4096..]);
+    assert_eq!(second["truncated"], false);
+
+    let mut no_request_body = exchange(project_id, "GET", "/empty");
+    no_request_body.request_body = None;
+    let no_body_id = state.db.insert_exchange(no_request_body).await.unwrap();
+    let absent = huntproxy::mcp::call_tool(
+        state.clone(),
+        "exchange_body",
+        serde_json::json!({
+            "project_id": project_id.get(),
+            "exchange_id": no_body_id.get(),
+            "side": "request"
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(absent["available"], false);
+    assert_eq!(absent["total"], 0);
+
+    let invalid_side = huntproxy::mcp::call_tool(
+        state,
+        "exchange_body",
+        serde_json::json!({
+            "project_id": project_id.get(),
+            "exchange_id": exchange_id.get(),
+            "side": "headers"
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(invalid_side.code(), ErrorCode::InvalidArgument);
 }

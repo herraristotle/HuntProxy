@@ -243,7 +243,10 @@ pub struct PluginJobView {
     pub base_exchange_id: Option<ExchangeId>,
     pub state: PluginJobState,
     pub phase: PluginJobPhase,
+    /// Planned request weight; composite operations may contain several requests.
     pub operation_count: usize,
+    /// Finished operation request weight, including failed/not-tested operations.
+    /// This is progress, not the number of requests actually sent.
     pub completed_operations: usize,
     /// Adaptive hint for agents and UIs. Omitted for terminal jobs.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -267,6 +270,7 @@ struct PluginJobRecord {
     operation_count: usize,
     completed_operations: usize,
     result: Option<Value>,
+    result_bytes: usize,
     analysis_resume_available: bool,
     analysis_checkpoint_status: String,
     analysis_resume_reason: Option<String>,
@@ -310,8 +314,180 @@ struct AnalysisCheckpoint {
     observations_fallback: Option<Value>,
     context: Value,
     plan_result: Value,
-    execution_evidence_exchange_ids: Vec<ExchangeId>,
+    plan_result_omitted_reason: Option<String>,
+    execution_summary: PluginExecutionSummary,
     _reservation: Arc<CheckpointReservation>,
+}
+
+/// Host observations of top-level execution, never a claim of clean coverage.
+#[derive(Debug, Clone, Default, Serialize)]
+struct PluginExecutionSummary {
+    planned_operations: usize,
+    observed_operations: usize,
+    skipped_operations: usize,
+    operations_with_errors: usize,
+    not_tested_operations: usize,
+    evidence_limited_operations: usize,
+    #[serde(skip)]
+    evidence_exchange_ids: BTreeSet<ExchangeId>,
+}
+
+impl PluginExecutionSummary {
+    fn record(&mut self, observation: &Value) {
+        if observation
+            .get("skipped")
+            .is_some_and(|value| !value.is_null())
+        {
+            self.skipped_operations += 1;
+        } else {
+            self.observed_operations += 1;
+        }
+        let mut errors = false;
+        let mut not_tested = false;
+        let mut limited = false;
+        fn inspect(value: &Value, errors: &mut bool, not_tested: &mut bool, limited: &mut bool) {
+            match value {
+                Value::Object(object) => {
+                    *errors |= object.get("error").is_some_and(|value| !value.is_null())
+                        || object
+                            .get("transport_error")
+                            .is_some_and(|value| !value.is_null())
+                        || object.get("timed_out").and_then(Value::as_bool) == Some(true);
+                    *not_tested |= object.get("tested").and_then(Value::as_bool) == Some(false)
+                        || object.get("status").and_then(Value::as_str) == Some("not_tested");
+                    *limited |= [
+                        "truncated",
+                        "response_body_truncated",
+                        "response_transcript_truncated",
+                    ]
+                    .iter()
+                    .any(|key| object.get(*key).and_then(Value::as_bool) == Some(true))
+                        || ["response_complete", "complete"]
+                            .iter()
+                            .any(|key| object.get(*key).and_then(Value::as_bool) == Some(false))
+                        || object
+                            .get("error")
+                            .and_then(|error| error.get("code"))
+                            .and_then(Value::as_str)
+                            == Some(ErrorCode::BodyTooLarge.as_str());
+                    // Only these host-owned envelopes contain observation
+                    // metadata. Payload searches and success predicates can
+                    // contain arbitrary keys such as `complete` or `error`.
+                    for key in ["raw", "terminal", "_extract"] {
+                        if let Some(child) = object.get(key) {
+                            inspect(child, errors, not_tested, limited);
+                        }
+                    }
+                    for key in ["steps", "members", "streams", "responses"] {
+                        if let Some(children) = object.get(key).and_then(Value::as_array) {
+                            for child in children {
+                                inspect(child, errors, not_tested, limited);
+                            }
+                        }
+                    }
+                }
+                Value::Array(items) => {
+                    for child in items {
+                        inspect(child, errors, not_tested, limited);
+                    }
+                }
+                _ => {}
+            }
+        }
+        inspect(observation, &mut errors, &mut not_tested, &mut limited);
+        self.operations_with_errors += usize::from(errors);
+        self.not_tested_operations += usize::from(not_tested);
+        self.evidence_limited_operations += usize::from(limited);
+        self.evidence_exchange_ids
+            .extend(collect_exchange_ids(observation));
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.observed_operations += other.observed_operations;
+        self.skipped_operations += other.skipped_operations;
+        self.operations_with_errors += other.operations_with_errors;
+        self.not_tested_operations += other.not_tested_operations;
+        self.evidence_limited_operations += other.evidence_limited_operations;
+        self.evidence_exchange_ids
+            .extend(other.evidence_exchange_ids);
+    }
+
+    fn value(&self) -> Value {
+        let unobserved = self
+            .planned_operations
+            .saturating_sub(self.observed_operations + self.skipped_operations);
+        let state = if self.planned_operations == 0 {
+            "no_operations_planned"
+        } else if self.observed_operations == 0 {
+            "no_observations"
+        } else if unobserved > 0 || self.skipped_operations > 0 {
+            "partial"
+        } else {
+            "observations_recorded"
+        };
+        let mut value = serde_json::to_value(self).expect("execution counters serialize");
+        value["state"] = json!(state);
+        value["unobserved_operations"] = json!(unobserved);
+        value["evidence_exchange_ids"] = json!(self.evidence_exchange_ids);
+        value
+    }
+}
+
+fn record_plugin_execution(
+    job: &PluginJob,
+    execution: &PluginExecutionSummary,
+) -> DomainResult<()> {
+    let value = execution.value();
+    let mut view = job.view.write();
+    if let Some(result) = view.result.as_ref() {
+        let old_bytes = serde_json::to_vec(&result["execution"]).map_or(0, |bytes| bytes.len());
+        let new_bytes = serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len());
+        let result_bytes = view
+            .result_bytes
+            .saturating_sub(old_bytes)
+            .saturating_add(new_bytes);
+        if result_bytes > MAX_RESULT_BYTES {
+            // Keep returned execution authoritative. Only the rare budget
+            // boundary compacts the planning output and serializes it again.
+            let mut bounded = result.clone();
+            bounded["execution"] = value;
+            bounded["plan_result"] = summarize_plugin_plan(&bounded["plan_result"]);
+            bounded["plan_result_omitted_reason"] = json!("execution_result_budget");
+            let mut bounded_bytes =
+                serde_json::to_vec(&bounded).map_or(usize::MAX, |bytes| bytes.len());
+            if bounded_bytes > MAX_RESULT_BYTES {
+                bounded["plan_result"] = json!({"omitted":true,"reason":"execution_result_budget"});
+                bounded_bytes =
+                    serde_json::to_vec(&bounded).map_or(usize::MAX, |bytes| bytes.len());
+            }
+            if bounded_bytes > MAX_RESULT_BYTES {
+                return Err(DomainError::new(
+                    ErrorCode::BodyTooLarge,
+                    "plugin execution evidence exceeds 8 MiB even without planning details",
+                ));
+            }
+            view.result = Some(bounded);
+            view.result_bytes = bounded_bytes;
+            return Ok(());
+        }
+        view.result.as_mut().expect("stored result")["execution"] = value;
+        view.result_bytes = result_bytes;
+    }
+    Ok(())
+}
+
+fn save_plugin_partial_result(job: &PluginJob, result: Value) -> DomainResult<()> {
+    let result_bytes = serde_json::to_vec(&result).map_or(usize::MAX, |bytes| bytes.len());
+    if result_bytes > MAX_RESULT_BYTES {
+        return Err(DomainError::new(
+            ErrorCode::BodyTooLarge,
+            "plugin partial result exceeds 8 MiB",
+        ));
+    }
+    let mut view = job.view.write();
+    view.result = Some(result);
+    view.result_bytes = result_bytes;
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -1046,6 +1222,7 @@ impl PluginService {
                 format!("plugin {plugin_id} is installed but disabled"),
             ));
         }
+        validate_host_plugin_compatibility(&plugin.manifest)?;
         if !plugin
             .manifest
             .actions
@@ -1096,7 +1273,14 @@ impl PluginService {
         validate_action_base_exchange(&plugin.manifest, action_manifest, base_exchange_id)?;
         let started = Instant::now();
         let prepared = self
-            .prepare_plugin_plan(project_id, base_exchange_id, plugin.clone(), action, &input)
+            .prepare_plugin_plan(
+                project_id,
+                base_exchange_id,
+                plugin.clone(),
+                action,
+                &input,
+                None,
+            )
             .await?;
         let project = self.db.get_project(project_id).await?;
         let mut by_type = BTreeMap::<String, usize>::new();
@@ -1133,6 +1317,7 @@ impl PluginService {
                 "execution": match prepared.plan.execution { PluginExecution::Sequential => "sequential", PluginExecution::Parallel => "parallel" },
                 "by_type": by_type,
             },
+            "planning_summary": summarize_plugin_plan(&prepared.plan.result),
             "runtime": {
                 "likely_ms": request_runtime_ms,
                 "low_ms": request_runtime_ms / 2,
@@ -1215,6 +1400,7 @@ impl PluginService {
                 operation_count: 0,
                 completed_operations: 0,
                 result: None,
+                result_bytes: 0,
                 analysis_resume_available: false,
                 analysis_checkpoint_status: "not_created".into(),
                 analysis_resume_reason: None,
@@ -1278,6 +1464,11 @@ impl PluginService {
             view.state = PluginJobState::Failed;
             view.phase = PluginJobPhase::Finished;
             view.error = Some("plugin changed since execution; analysis retry refused".into());
+            view.analysis_resume_available = false;
+            view.analysis_checkpoint_status = "unavailable".into();
+            view.analysis_resume_reason =
+                Some("Plugin changed since the saved observations were collected.".into());
+            *job.analysis_checkpoint.lock() = None;
             return Err(DomainError::new(
                 ErrorCode::Conflict,
                 "plugin changed since execution; analysis retry refused",
@@ -1458,6 +1649,7 @@ impl PluginService {
         plugin: Arc<LoadedPlugin>,
         action: &str,
         input: &Value,
+        cancel: Option<CancellationToken>,
     ) -> DomainResult<PreparedPluginPlan> {
         self.db.get_project(project_id).await?;
         let privileged_identity = plugin
@@ -1503,7 +1695,9 @@ impl PluginService {
             "related_exchanges": related_exchanges,
             "resources": &*plugin.resources,
         });
-        let plan_value = run_js_stage(&plugin, "plan", input, &Value::Null, &context).await?;
+        let plan_value =
+            run_js_stage_with_timeout(&plugin, "plan", input, &Value::Null, &context, None, cancel)
+                .await?;
         let plan: PluginPlan = serde_json::from_value(plan_value)
             .map_err(|error| DomainError::invalid(format!("invalid plugin plan: {error}")))?;
         validate_plan_preview(plan.preview.as_ref())?;
@@ -1598,6 +1792,9 @@ impl PluginService {
             }
             Ok(Err(error)) if error.code() == ErrorCode::Cancelled => {
                 *job.analysis_checkpoint.lock() = None;
+                view.analysis_resume_available = false;
+                view.analysis_checkpoint_status = "consumed".into();
+                view.analysis_resume_reason = None;
                 view.state = PluginJobState::Cancelled;
                 view.phase = PluginJobPhase::Finished;
                 view.error = Some(error.to_string());
@@ -1605,6 +1802,9 @@ impl PluginService {
             Ok(Err(error)) => {
                 if error.code() != ErrorCode::Timeout {
                     *job.analysis_checkpoint.lock() = None;
+                    view.analysis_resume_available = false;
+                    view.analysis_checkpoint_status = "unavailable".into();
+                    view.analysis_resume_reason = None;
                 }
                 view.state = PluginJobState::Failed;
                 view.phase = PluginJobPhase::Finished;
@@ -1613,6 +1813,10 @@ impl PluginService {
             Err(_) => {
                 job.cancel.cancel();
                 *job.analysis_checkpoint.lock() = None;
+                view.analysis_resume_available = false;
+                view.analysis_checkpoint_status = "unavailable".into();
+                view.analysis_resume_reason =
+                    Some("The whole job timed out; its analysis checkpoint was discarded.".into());
                 view.state = PluginJobState::Failed;
                 view.phase = PluginJobPhase::Finished;
                 view.error = Some(format!("plugin job timed out after {timeout_ms} ms"));
@@ -1637,9 +1841,30 @@ impl PluginService {
             resolved_identities,
             planned_requests,
         } = self
-            .prepare_plugin_plan(project_id, base_exchange_id, plugin.clone(), action, input)
+            .prepare_plugin_plan(
+                project_id,
+                base_exchange_id,
+                plugin.clone(),
+                action,
+                input,
+                Some(job.cancel.clone()),
+            )
             .await?;
         job.view.write().operation_count = planned_requests;
+        let mut execution_summary = PluginExecutionSummary {
+            planned_operations: plan.operations.len(),
+            ..Default::default()
+        };
+        let partial_result = json!({
+            "plan_result": plan.result.clone(),
+            "execution": execution_summary.value(),
+            "analysis": Value::Null,
+            "persisted_findings": [],
+        });
+        let partial_result = self
+            .redact_plugin_output(project_id, base_exchange_id, partial_result)
+            .await?;
+        save_plugin_partial_result(&job, partial_result)?;
         job.view.write().phase = PluginJobPhase::Executing;
         let project_id = job.view.read().project_id;
         let project = self.db.get_project(project_id).await?;
@@ -1710,16 +1935,28 @@ impl PluginService {
                 let failed = observation
                     .get("error")
                     .is_some_and(|error| !error.is_null());
-                push_bounded_analysis_observation(
+                let mut recorded = PluginExecutionSummary::default();
+                recorded.record(&observation);
+                let pushed = push_bounded_analysis_observation(
                     &mut observations,
                     observation,
                     &mut observation_bytes,
-                )?;
+                );
+                if pushed.is_ok() {
+                    execution_summary.record(observations.last().expect("pushed observation"));
+                } else {
+                    execution_summary.merge(recorded);
+                }
+                record_plugin_execution(&job, &execution_summary)?;
+                pushed?;
                 if failed && plan.stop_on_error {
                     for skipped in operations {
+                        let observation = skipped_operation_observation(&skipped);
+                        execution_summary.record(&observation);
+                        record_plugin_execution(&job, &execution_summary)?;
                         push_bounded_analysis_observation(
                             &mut observations,
-                            skipped_operation_observation(&skipped),
+                            observation,
                             &mut observation_bytes,
                         )?;
                     }
@@ -1766,11 +2003,21 @@ impl PluginService {
             let mut observations = Vec::new();
             let mut observation_bytes = 2usize;
             while let Some(observation) = pending.next().await {
-                push_bounded_analysis_observation(
+                let observation = observation?;
+                let mut recorded = PluginExecutionSummary::default();
+                recorded.record(&observation);
+                let pushed = push_bounded_analysis_observation(
                     &mut observations,
-                    observation?,
+                    observation,
                     &mut observation_bytes,
-                )?;
+                );
+                if pushed.is_ok() {
+                    execution_summary.record(observations.last().expect("pushed observation"));
+                } else {
+                    execution_summary.merge(recorded);
+                }
+                record_plugin_execution(&job, &execution_summary)?;
+                pushed?;
             }
             observations.into_iter().map(Ok).collect()
         };
@@ -1791,23 +2038,16 @@ impl PluginService {
             ));
         }
         let execution_evidence_exchange_ids = collect_exchange_ids(&json!(observations));
-        let partial_result = json!({
-            "plan_result": plan.result.clone(),
-            "execution": {"evidence_exchange_ids": execution_evidence_exchange_ids},
-            "analysis": Value::Null,
-            "persisted_findings": [],
-        });
+        let partial_result = job
+            .view
+            .read()
+            .result
+            .clone()
+            .expect("initial partial result");
         let partial_result = self
             .redact_plugin_output(project_id, base_exchange_id, partial_result)
             .await?;
-        if serde_json::to_vec(&partial_result).map_or(true, |bytes| bytes.len() > MAX_RESULT_BYTES)
-        {
-            return Err(DomainError::new(
-                ErrorCode::BodyTooLarge,
-                "plugin partial result exceeds 8 MiB",
-            ));
-        }
-        job.view.write().result = Some(partial_result);
+        save_plugin_partial_result(&job, partial_result)?;
         let job_id = job.view.read().id;
         for exchange_id in &execution_evidence_exchange_ids {
             self.annotate_plugin_job_exchange(project_id, *exchange_id, job_id)
@@ -1817,6 +2057,28 @@ impl PluginService {
             Value::Array(observations),
             MAX_ANALYSIS_OBSERVATION_BYTES,
         )?;
+        // The final aggregate compaction may omit additional bodies. Recount
+        // once so the saved summary includes those analysis limitations.
+        let mut finalized_execution = PluginExecutionSummary {
+            planned_operations: execution_summary.planned_operations,
+            ..Default::default()
+        };
+        for observation in observations.as_array().expect("observation array") {
+            finalized_execution.record(observation);
+        }
+        execution_summary = finalized_execution;
+        record_plugin_execution(&job, &execution_summary)?;
+        let (reported_plan_result, plan_result_omitted_reason) = {
+            let view = job.view.read();
+            let result = view.result.as_ref().expect("saved partial result");
+            (
+                result["plan_result"].clone(),
+                result
+                    .get("plan_result_omitted_reason")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            )
+        };
         let observations_json = serde_json::to_vec(&observations).map_err(|error| {
             DomainError::invalid(format!("serialize plugin observations: {error}"))
         })?;
@@ -1849,8 +2111,9 @@ impl PluginService {
                 .is_none()
                 .then(|| json!(observations)),
             context,
-            plan_result: plan.result,
-            execution_evidence_exchange_ids,
+            plan_result: reported_plan_result,
+            plan_result_omitted_reason,
+            execution_summary,
             _reservation: reservation.unwrap_or_else(|| {
                 Arc::new(CheckpointReservation {
                     bytes: 0,
@@ -2042,7 +2305,10 @@ impl PluginService {
                 })
             })
             .collect::<Vec<_>>();
-        let provisional_result = json!({"plan_result": checkpoint.plan_result.clone(), "execution": {"evidence_exchange_ids": checkpoint.execution_evidence_exchange_ids.clone()}, "analysis": analyzed.clone(), "persisted_findings": provisional_findings});
+        let mut provisional_result = json!({"plan_result": checkpoint.plan_result.clone(), "execution": checkpoint.execution_summary.value(), "analysis": analyzed.clone(), "persisted_findings": provisional_findings});
+        if let Some(reason) = &checkpoint.plan_result_omitted_reason {
+            provisional_result["plan_result_omitted_reason"] = json!(reason);
+        }
         let provisional_result = self
             .redact_plugin_output(project_id, base_exchange_id, provisional_result)
             .await?;
@@ -2067,7 +2333,10 @@ impl PluginService {
             .db
             .create_findings_atomic(project_id, pending_findings)
             .await?;
-        let result = json!({"plan_result": checkpoint.plan_result, "execution": {"evidence_exchange_ids": checkpoint.execution_evidence_exchange_ids}, "analysis": analyzed, "persisted_findings": persisted_findings});
+        let mut result = json!({"plan_result": checkpoint.plan_result, "execution": checkpoint.execution_summary.value(), "analysis": analyzed, "persisted_findings": persisted_findings});
+        if let Some(reason) = &checkpoint.plan_result_omitted_reason {
+            result["plan_result_omitted_reason"] = json!(reason);
+        }
         job.view.write().analysis_resume_available = false;
         job.view.write().analysis_checkpoint_status = "consumed".into();
         *job.analysis_checkpoint.lock() = None;
@@ -2171,6 +2440,7 @@ impl PluginService {
         let mut context = json!({
             "exchange_id": exchange_id,
             "method": detail.summary.method.clone(),
+            "status_code": detail.summary.status_code,
             "url": format!("{}://{}{}{}", detail.summary.scheme, detail.summary.authority, detail.summary.path, query),
             "headers": detail.request_headers.clone(),
             "request_length": detail.summary.request_length,
@@ -2990,7 +3260,11 @@ impl PluginService {
                     None => None,
                 };
                 let raw = plugin_raw_observation(&response, transcript)?;
-                Ok(json!({"id":request.id,"raw":raw}))
+                let mut observation = json!({"id":request.id,"raw":raw});
+                if let Some(error) = raw_response_error(&response) {
+                    observation["error"] = json!(error);
+                }
+                Ok(observation)
             }
             PluginOperation::RawHttp1Group(group) => {
                 validate_workflow_name(&group.id, "raw_http1_group id")?;
@@ -3097,7 +3371,11 @@ impl PluginService {
                                     Some(exchange_id) => service.db.load_raw_body(project_id, exchange_id, MessageSide::Response).await?,
                                     None => None,
                                 };
-                                json!({"id":member_id,"raw":plugin_raw_observation(&response, transcript)?})
+                                let mut observation = json!({"id":member_id,"raw":plugin_raw_observation(&response, transcript)?});
+                                if let Some(error) = raw_response_error(&response) {
+                                    observation["error"] = json!(error);
+                                }
+                                observation
                             }
                             Err(error) if error.code() == ErrorCode::Cancelled => return Err(error),
                             Err(error) => json!({"id":member_id,"error":{"code":error.code().as_str(),"message":error.to_string()}}),
@@ -3190,6 +3468,7 @@ impl PluginService {
                         "reset": stream.reset,
                         "complete": stream.complete,
                         "truncated": stream.truncated,
+                        "transport_error": stream.transport_error,
                     }));
                 }
                 Ok(json!({
@@ -3198,6 +3477,7 @@ impl PluginService {
                     "single_write_release": response.single_write_release,
                     "goaway": response.goaway,
                     "timed_out": response.timed_out,
+                    "transport_error": response.transport_error,
                     "streams": streams,
                 }))
             }
@@ -3921,7 +4201,7 @@ impl PluginService {
                 "complete": response.complete,
                 "truncated": response.truncated,
                 "reset": response.reset,
-                "error": Value::Null,
+                "error": response.transport_error,
             }));
         }
         Ok(json!({
@@ -3933,6 +4213,7 @@ impl PluginService {
             "responses": responses,
             "error": if result.timed_out { json!({"code":"timeout","message":"HTTP/2 race response timed out"}) } else { Value::Null },
             "goaway": result.goaway,
+            "transport_error": result.transport_error,
         }))
     }
 
@@ -3998,10 +4279,14 @@ impl PluginService {
                 )
                 .await?;
             }
-            let success = self
-                .evaluate_race_exchange(project_id, response.exchange_id, request.success.as_ref())
-                .await?;
-            Ok::<_, DomainError>(json!({"id":request.id,"exchange_id":response.exchange_id,"status_code":response.status_code,"response_length":response.response_bytes,"response_body_hash":Value::Null,"duration_ms":Value::Null,"success":success,"error":Value::Null}))
+            let error = raw_response_error(&response);
+            let success = if error.is_none() {
+                self.evaluate_race_exchange(project_id, response.exchange_id, request.success.as_ref())
+                    .await?
+            } else {
+                Value::Null
+            };
+            Ok::<_, DomainError>(json!({"id":request.id,"exchange_id":response.exchange_id,"status_code":response.status_code,"response_length":response.response_bytes,"response_body_hash":Value::Null,"duration_ms":Value::Null,"success":success,"response_complete":response.response_complete,"transport_error":response.transport_error,"error":error}))
         }.await;
         result.unwrap_or_else(|error| json!({"id":request.id,"error":error.to_string()}))
     }
@@ -4026,6 +4311,9 @@ impl PluginService {
                 crate::policy::PresentationOptions::default(),
             )
             .await?;
+        if detail.summary.completion != CompletionState::Complete {
+            return Ok(Value::Null);
+        }
         let headers = self
             .db
             .load_raw_headers(project_id, exchange_id, MessageSide::Response)
@@ -4119,6 +4407,50 @@ impl PluginService {
     }
 }
 
+fn validate_host_plugin_compatibility(manifest: &PluginManifest) -> DomainResult<()> {
+    // Racer versions before 0.6.4 analyze the current host's explicit failed
+    // race observations as novel response signatures. Preserved or modified
+    // copies are not auto-upgraded, so fail before preview or execution rather
+    // than returning false findings.
+    if manifest.id != "racer" || compatible_racer_version(&manifest.version) {
+        return Ok(());
+    }
+    Err(DomainError::new(
+        ErrorCode::ProtocolIncompatible,
+        format!(
+            "Racer {} is incompatible with this HuntProxy host; update or restore the Racer plugin to version 0.6.4 or newer before previewing or running it",
+            manifest.version
+        ),
+    ))
+}
+
+fn compatible_racer_version(version: &str) -> bool {
+    let version = version.trim();
+    let core_and_prerelease = version.split_once('+').map_or(version, |(core, _)| core);
+    let (core, prerelease) = core_and_prerelease
+        .split_once('-')
+        .map_or((core_and_prerelease, false), |(core, _)| (core, true));
+    let mut components = core.split('.');
+    let parsed = components
+        .next()
+        .and_then(|major| major.parse::<u64>().ok())
+        .zip(
+            components
+                .next()
+                .and_then(|minor| minor.parse::<u64>().ok()),
+        )
+        .zip(
+            components
+                .next()
+                .and_then(|patch| patch.parse::<u64>().ok()),
+        )
+        .map(|((major, minor), patch)| (major, minor, patch));
+    let Some(parsed) = parsed.filter(|_| components.next().is_none()) else {
+        return false;
+    };
+    parsed > (0, 6, 4) || (parsed == (0, 6, 4) && !prerelease)
+}
+
 fn validate_plan_preview(preview: Option<&PluginPlanPreview>) -> DomainResult<()> {
     let Some(preview) = preview else {
         return Ok(());
@@ -4209,6 +4541,14 @@ fn remove_remediation_fields(value: &mut Value) {
     }
 }
 
+fn summarize_plugin_plan(result: &Value) -> Value {
+    let mut summary = compact_json(result, 0);
+    if let Some(object) = summary.as_object_mut() {
+        object.remove("coverage");
+    }
+    summary
+}
+
 fn summarize_plugin_result(result: &Value) -> Value {
     let follow_up = result.pointer("/analysis/result/follow_up").map(|value| {
         if serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 64 * 1024) {
@@ -4220,10 +4560,7 @@ fn summarize_plugin_result(result: &Value) -> Value {
             })
         }
     });
-    let mut plan_result = compact_json(result.get("plan_result").unwrap_or(&Value::Null), 0);
-    if let Some(object) = plan_result.as_object_mut() {
-        object.remove("coverage");
-    }
+    let plan_result = summarize_plugin_plan(result.get("plan_result").unwrap_or(&Value::Null));
     let mut analysis_result = compact_json(
         result.pointer("/analysis/result").unwrap_or(&Value::Null),
         0,
@@ -4231,8 +4568,29 @@ fn summarize_plugin_result(result: &Value) -> Value {
     if let Some(object) = analysis_result.as_object_mut() {
         object.remove("follow_up");
     }
+    let execution = result
+        .get("execution")
+        .and_then(Value::as_object)
+        .map(|object| {
+            let mut summary = object
+                .iter()
+                .filter(|(key, _)| *key != "evidence_exchange_ids")
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<serde_json::Map<_, _>>();
+            summary.insert(
+                "evidence_exchange_count".into(),
+                json!(object
+                    .get("evidence_exchange_ids")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len)),
+            );
+            Value::Object(summary)
+        })
+        .unwrap_or(Value::Null);
     json!({
         "plan_result": plan_result,
+        "plan_result_omitted_reason": result.get("plan_result_omitted_reason"),
+        "execution": execution,
         "execution_evidence": {
             "count": result.pointer("/execution/evidence_exchange_ids").and_then(Value::as_array).map_or(0, Vec::len)
         },
@@ -4790,6 +5148,13 @@ fn plugin_response_body(
         contains,
         search_complete: true,
     }
+}
+
+fn raw_response_error(response: &crate::reply::RawReplyResult) -> Option<String> {
+    response.transport_error.clone().or_else(|| {
+        (!response.response_complete || response.truncated)
+            .then(|| "raw response transcript is incomplete or truncated".into())
+    })
 }
 
 fn plugin_raw_observation(
@@ -6146,16 +6511,6 @@ fn validate_manifest(manifest: &PluginManifest) -> DomainResult<()> {
     Ok(())
 }
 
-async fn run_js_stage(
-    plugin: &LoadedPlugin,
-    stage: &'static str,
-    input: &Value,
-    observations: &Value,
-    context: &Value,
-) -> DomainResult<Value> {
-    run_js_stage_with_timeout(plugin, stage, input, observations, context, None, None).await
-}
-
 async fn run_js_stage_with_timeout(
     plugin: &LoadedPlugin,
     stage: &'static str,
@@ -6242,8 +6597,12 @@ fn run_js_sync(
     let interrupted_handler = interrupted.clone();
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancelled_handler = cancelled.clone();
+    let interrupt_cancel = cancel.clone();
     runtime.set_interrupt_handler(Some(Box::new(move || {
-        if cancel.as_ref().is_some_and(CancellationToken::is_cancelled) {
+        if interrupt_cancel
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
             cancelled_handler.store(true, Ordering::Relaxed);
             return true;
         }
@@ -6304,20 +6663,14 @@ fn run_js_sync(
             .transpose()?
             .ok_or_else(|| "plugin returned undefined".to_string())
     });
-    if cancelled.load(Ordering::Relaxed) {
-        return Err(DomainError::new(
-            ErrorCode::Cancelled,
-            "plugin JavaScript stage cancelled",
-        ));
-    }
-    if interrupted.load(Ordering::Relaxed) {
-        return Err(DomainError::new(
-            ErrorCode::Timeout,
-            format!(
-                "plugin JavaScript stage exceeded {} ms",
-                stage_timeout.as_millis()
-            ),
-        ));
+    if let Some(error) = javascript_stage_terminal_error(
+        cancelled.load(Ordering::Relaxed),
+        interrupted.load(Ordering::Relaxed),
+        cancel.as_ref(),
+        deadline,
+        stage_timeout,
+    ) {
+        return Err(error);
     }
     let output = output.map_err(|error| {
         DomainError::new(
@@ -6331,6 +6684,31 @@ fn run_js_sync(
             format!("plugin {stage} returned invalid JSON: {error}"),
         )
     })
+}
+
+fn javascript_stage_terminal_error(
+    interrupted_cancel: bool,
+    interrupted_timeout: bool,
+    cancel: Option<&CancellationToken>,
+    deadline: Instant,
+    stage_timeout: Duration,
+) -> Option<DomainError> {
+    if interrupted_cancel || cancel.is_some_and(CancellationToken::is_cancelled) {
+        return Some(DomainError::new(
+            ErrorCode::Cancelled,
+            "plugin JavaScript stage cancelled",
+        ));
+    }
+    if interrupted_timeout || Instant::now() >= deadline {
+        return Some(DomainError::new(
+            ErrorCode::Timeout,
+            format!(
+                "plugin JavaScript stage exceeded {} ms",
+                stage_timeout.as_millis()
+            ),
+        ));
+    }
+    None
 }
 
 fn bounded_javascript_error(mut message: String) -> String {
@@ -6390,6 +6768,7 @@ mod tests {
                 operation_count: 0,
                 completed_operations: 0,
                 result: None,
+                result_bytes: 0,
                 analysis_resume_available: false,
                 analysis_checkpoint_status: "not_created".into(),
                 analysis_resume_reason: None,
@@ -6398,6 +6777,18 @@ mod tests {
             cancel: CancellationToken::new(),
             analysis_checkpoint: parking_lot::Mutex::new(None),
         })
+    }
+
+    fn fail_on_terminal_job(status: &PluginJobView, expectation: &str) {
+        assert!(
+            !matches!(
+                status.state,
+                PluginJobState::Completed | PluginJobState::Failed | PluginJobState::Cancelled
+            ),
+            "{expectation}, reached {:?}: {:?}",
+            status.state,
+            status.error
+        );
     }
 
     #[test]
@@ -6446,6 +6837,198 @@ mod tests {
             summary["analysis_result"]["large_diagnostic_array"]["count"],
             3
         );
+    }
+
+    #[test]
+    fn execution_summary_distinguishes_empty_missing_failed_and_skipped_work() {
+        let mut execution = PluginExecutionSummary::default();
+        assert_eq!(execution.value()["state"], "no_operations_planned");
+        execution.planned_operations = 5;
+        assert_eq!(execution.value()["state"], "no_observations");
+        execution.record(&json!({"id":"one","steps":[
+            {"exchange_id":12,"response_body_truncated":true},
+            {"error":{"code":"protocol_error","message":"response unavailable"}}
+        ]}));
+        execution.record(&json!({"id":"two","tested":false,"status":"not_tested"}));
+        execution.record(&json!({"id":"three","skipped":{"reason":"previous operation failed"}}));
+        let value = execution.value();
+        assert_eq!(value["state"], "partial");
+        assert_eq!(value["planned_operations"], 5);
+        assert_eq!(value["observed_operations"], 2);
+        assert_eq!(value["skipped_operations"], 1);
+        assert_eq!(value["unobserved_operations"], 2);
+        assert_eq!(value["operations_with_errors"], 1);
+        assert_eq!(value["not_tested_operations"], 1);
+        assert_eq!(value["evidence_limited_operations"], 1);
+        assert_eq!(value["evidence_exchange_ids"], json!([12]));
+        execution.record(&json!({"id":"four","exchange_id":12}));
+        execution.record(
+            &json!({"id":"five","raw":{"response_complete":false,"transport_error":"read failed"}}),
+        );
+        assert_eq!(execution.value()["unobserved_operations"], 0);
+        assert_eq!(execution.value()["evidence_exchange_ids"], json!([12]));
+        assert_eq!(execution.value()["operations_with_errors"], 2);
+        assert_eq!(execution.value()["evidence_limited_operations"], 2);
+        execution.skipped_operations = 0;
+        execution.planned_operations = execution.observed_operations;
+        assert_eq!(execution.value()["state"], "observations_recorded");
+    }
+
+    #[test]
+    fn compact_results_preserve_execution_and_planning_exclusion_counts() {
+        let execution = PluginExecutionSummary::default().value();
+        let plan = json!({"coverage":{"tested":20},"selection":{
+            "selected":0,"excluded":2,"reasons":{"unsupported_request_shape":2}
+        }});
+        let summary = summarize_plugin_result(&json!({
+            "plan_result":plan,"execution":execution,"analysis":null
+        }));
+        assert!(summary["execution"].get("evidence_exchange_ids").is_none());
+        assert_eq!(summary["execution"]["evidence_exchange_count"], 0);
+        for (key, value) in execution.as_object().unwrap() {
+            if key != "evidence_exchange_ids" {
+                assert_eq!(&summary["execution"][key], value);
+            }
+        }
+        assert!(summary["plan_result"].get("coverage").is_none());
+        assert_eq!(
+            summary["plan_result"]["selection"]["reasons"]["unsupported_request_shape"],
+            2
+        );
+        assert_eq!(summary["plan_result"], summarize_plugin_plan(&plan));
+    }
+
+    #[test]
+    fn execution_summary_ignores_payload_keys_that_resemble_runtime_metadata() {
+        let mut execution = PluginExecutionSummary {
+            planned_operations: 2,
+            ..Default::default()
+        };
+        execution.record(&json!({
+            "id":"ordinary-response","status_code":503,
+            "response_body_contains":{"complete":false,"timed_out":true,"tested":false,"error":true},
+            "result":{"error":"application data","status":"not_tested","truncated":true},
+            "success":{"checks":[{"complete":false,"timed_out":true}]},
+        }));
+        let value = execution.value();
+        assert_eq!(value["operations_with_errors"], 0);
+        assert_eq!(value["not_tested_operations"], 0);
+        assert_eq!(value["evidence_limited_operations"], 0);
+        execution.record(&json!({"id":"composite","members":[{
+            "raw":{"transport_error":"read failed","response_complete":false},
+            "response_body_contains":{"tested":false},
+        }],"streams":[{"complete":false}],"responses":[{"tested":false}],
+          "_extract":{"response_body_truncated":true}}));
+        let value = execution.value();
+        assert_eq!(value["operations_with_errors"], 1);
+        assert_eq!(value["not_tested_operations"], 1);
+        assert_eq!(value["evidence_limited_operations"], 1);
+    }
+
+    #[test]
+    fn oversized_partial_result_is_rejected_before_becoming_available() {
+        let job = test_job(PluginJobState::Failed);
+        let result = json!({"plan_result":{"detail":"a".repeat(MAX_RESULT_BYTES)},"analysis":null});
+        let error = save_plugin_partial_result(&job, result).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::BodyTooLarge);
+        assert!(job.view.read().result.is_none());
+        save_plugin_partial_result(&job, json!({"plan_result":{},"analysis":null})).unwrap();
+        assert!(job.view.read().result.is_some());
+    }
+
+    #[test]
+    fn execution_updates_cannot_exceed_partial_result_size_limit() {
+        let job = test_job(PluginJobState::Cancelled);
+        let mut execution = PluginExecutionSummary {
+            planned_operations: 1,
+            ..Default::default()
+        };
+        let mut result =
+            json!({"plan_result":{"detail":""},"execution":execution.value(),"analysis":null});
+        let base_bytes = serde_json::to_vec(&result).unwrap().len();
+        result["plan_result"]["detail"] = json!("a".repeat(MAX_RESULT_BYTES - base_bytes - 2));
+        save_plugin_partial_result(&job, result).unwrap();
+        execution.record(&json!({"id":"returned","exchange_id":123456}));
+        record_plugin_execution(&job, &execution).unwrap();
+        let view = job.view.read();
+        assert_eq!(
+            view.result.as_ref().unwrap()["execution"]["observed_operations"],
+            1
+        );
+        assert_eq!(
+            view.result.as_ref().unwrap()["execution"]["evidence_exchange_ids"],
+            json!([123456])
+        );
+        assert_eq!(
+            view.result.as_ref().unwrap()["plan_result_omitted_reason"],
+            "execution_result_budget"
+        );
+        assert!(
+            serde_json::to_vec(view.result.as_ref().unwrap())
+                .unwrap()
+                .len()
+                <= MAX_RESULT_BYTES
+        );
+        drop(view);
+
+        // Compacting strings cannot shorten an oversized object key. In this
+        // case omit the planning output while retaining the same evidence.
+        let job = test_job(PluginJobState::Cancelled);
+        let initial = PluginExecutionSummary {
+            planned_operations: 1,
+            ..Default::default()
+        };
+        let mut result =
+            json!({"plan_result":{"":null},"execution":initial.value(),"analysis":null});
+        let base_bytes = serde_json::to_vec(&result).unwrap().len();
+        let mut plan = serde_json::Map::new();
+        plan.insert("a".repeat(MAX_RESULT_BYTES - base_bytes - 2), Value::Null);
+        result["plan_result"] = Value::Object(plan);
+        save_plugin_partial_result(&job, result).unwrap();
+        record_plugin_execution(&job, &execution).unwrap();
+        let view = job.view.read();
+        assert_eq!(
+            view.result.as_ref().unwrap()["plan_result"]["omitted"],
+            true
+        );
+        assert_eq!(
+            view.result.as_ref().unwrap()["execution"]["observed_operations"],
+            1
+        );
+        assert_eq!(
+            view.result.as_ref().unwrap()["execution"]["evidence_exchange_ids"],
+            json!([123456])
+        );
+        assert!(view.result_bytes <= MAX_RESULT_BYTES);
+    }
+
+    #[test]
+    fn composite_compaction_preserves_operation_counts_and_evidence() {
+        let observation = json!({"id":"group","members":[
+            {"id":"one","raw":{"exchange_id":41,"response_complete":true,"response_transcript_base64":"a".repeat(2000)}},
+            {"id":"two","raw":{"exchange_id":42,"response_complete":false},"error":"read failed"}
+        ]});
+        let mut before = PluginExecutionSummary {
+            planned_operations: 1,
+            ..Default::default()
+        };
+        before.record(&observation);
+        let compacted =
+            compact_analysis_observations(Value::Array(vec![observation]), 512).unwrap();
+        let mut after = PluginExecutionSummary {
+            planned_operations: 1,
+            ..Default::default()
+        };
+        after.record(&compacted[0]);
+        assert_eq!(after.value(), before.value());
+        assert_eq!(after.value()["evidence_exchange_ids"], json!([41, 42]));
+        assert_eq!(
+            compacted[0]["members"][0]["raw"]["response_transcript_omitted_reason"],
+            "analysis_budget"
+        );
+        let summary = summarize_plugin_result(&json!({"execution":after.value()}));
+        assert_eq!(summary["execution"]["evidence_exchange_count"], 2);
+        assert!(summary["execution"].get("evidence_exchange_ids").is_none());
     }
 
     #[test]
@@ -6734,6 +7317,55 @@ mod tests {
     }
 
     #[test]
+    fn javascript_short_stage_honors_zero_timeout() {
+        let script = r#"globalThis.HuntProxyPlugin = {
+          plan() { return {operations: []}; }, analyze() { return {}; }
+        };"#;
+        for (stage, observations) in [("plan", "null"), ("analyze", "[]")] {
+            let error = run_js_sync(
+                script,
+                stage,
+                "{}",
+                observations,
+                "{}",
+                4 * 1024 * 1024,
+                Duration::ZERO,
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::Timeout, "stage {stage}");
+        }
+    }
+
+    #[test]
+    fn javascript_stage_checks_elapsed_deadline_after_execution() {
+        let error = javascript_stage_terminal_error(
+            false,
+            false,
+            None,
+            Instant::now() - Duration::from_millis(1),
+            Duration::from_millis(250),
+        )
+        .unwrap();
+        assert_eq!(error.code(), ErrorCode::Timeout);
+    }
+
+    #[test]
+    fn javascript_stage_rechecks_cancellation_after_execution() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let error = javascript_stage_terminal_error(
+            false,
+            false,
+            Some(&cancel),
+            Instant::now() - Duration::from_millis(1),
+            Duration::from_millis(250),
+        )
+        .unwrap();
+        assert_eq!(error.code(), ErrorCode::Cancelled);
+    }
+
+    #[test]
     fn required_base_exchange_is_rejected_before_plugin_planning() {
         let manifest = PluginManifest {
             schema_version: PLUGIN_API_VERSION,
@@ -6941,7 +7573,7 @@ mod tests {
             )
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 if service.status(job.id).unwrap().state == PluginJobState::Completed {
                     break;
@@ -6982,6 +7614,117 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code(), ErrorCode::Cancelled);
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn javascript_short_stage_gives_pre_cancelled_token_precedence() {
+        let script = r#"globalThis.HuntProxyPlugin = {
+          plan() { return {operations: []}; }, analyze() { return {}; }
+        };"#;
+        for (stage, observations) in [("plan", "null"), ("analyze", "[]")] {
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+            let error = run_js_sync(
+                script,
+                stage,
+                "{}",
+                observations,
+                "{}",
+                4 * 1024 * 1024,
+                Duration::ZERO,
+                Some(cancel),
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::Cancelled, "stage {stage}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_job_interrupts_javascript_planning_before_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::load(Some(directory.path().join("data"))).unwrap();
+        let db = Arc::new(crate::storage::Db::open(&config).await.unwrap());
+        let project = db
+            .create_project(CreateProjectRequest {
+                name: "planning cancellation".into(),
+                target_url: "https://example.test".into(),
+                advanced: None,
+            })
+            .await
+            .unwrap();
+        let plugin_directory = directory.path().join("plugins");
+        let package = plugin_directory.join("planning-cancel-test");
+        crate::config::create_private_dir(&package).unwrap();
+        let script = r#"globalThis.HuntProxyPlugin = {
+          plan() { while (true) {} },
+          analyze() { throw new Error("analysis must not run"); }
+        };"#;
+        std::fs::write(package.join("index.js"), script).unwrap();
+        let digest = hex::encode(Sha256::digest(script.as_bytes()));
+        std::fs::write(
+            package.join("plugin.json"),
+            serde_json::to_vec(&json!({
+                "schema_version":1,"id":"planning-cancel-test","name":"Planning Cancel Test","version":"1.0.0","description":"test","enabled":true,
+                "entrypoint":"index.js","entrypoint_sha256":digest,"capabilities":[],
+                "limits":{"timeout_ms":30000,"js_stage_timeout_ms":30000,"max_operations":1,"max_concurrency":1,"memory_mb":8},
+                "actions":[{"name":"run","description":"run","input_schema":{"type":"object"}}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let reply = Arc::new(ReplyService {
+            db: db.clone(),
+            transport: Arc::new(UnusedTransport),
+            placeholder_key: crate::reply::PlaceholderKey::from_bytes(vec![9; 32]),
+            upstream_proxies: Default::default(),
+        });
+        let service = PluginService::load(plugin_directory, db, reply).unwrap();
+        let job = service
+            .run(project.id, "planning-cancel-test", "run", None, json!({}))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let status = service.status(job.id).unwrap();
+                if status.phase == PluginJobPhase::Planning
+                    && status.state == PluginJobState::Running
+                {
+                    break;
+                }
+                fail_on_terminal_job(&status, "expected JavaScript planning to start");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let started = Instant::now();
+        service.cancel(job.id).unwrap();
+        let cancelled = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let status = service.status(job.id).unwrap();
+                if status.state == PluginJobState::Cancelled {
+                    break status;
+                }
+                fail_on_terminal_job(&status, "expected planning cancellation");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(cancelled.phase, PluginJobPhase::Finished);
+        assert_eq!(cancelled.operation_count, 0);
+        assert_eq!(cancelled.completed_operations, 0);
+        assert!(cancelled
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("cancelled")));
+        assert!(!service
+            .results(job.id, PluginResultView::Full, 0, 25)
+            .unwrap()["result_available"]
+            .as_bool()
+            .unwrap());
     }
 
     #[test]
@@ -7055,7 +7798,14 @@ mod tests {
         let package = plugin_directory.join("retry-test");
         crate::config::create_private_dir(&package).unwrap();
         let script = r#"globalThis.HuntProxyPlugin = {
-          plan() { return {operations: [], result: {planned: true}}; },
+          plan(input) {
+            if (input.fail_first || input.pause_second) return {execution: "sequential", stop_on_error: !input.pause_second,
+              operations: ["first", "second"].map(id => ({type: "http_request", id,
+                url: "https://example.test/", body_base64: "!",
+                delay_before_ms: input.pause_second && id === "second" ? 1000 : 0})),
+              result: {selection: {selected: 2, excluded: 1, reasons: {unsupported_request_shape: 1}}}};
+            return {operations: [], result: {planned: true}};
+          },
           analyze() { const end = Date.now() + 400; while (Date.now() < end) {} return {findings: [], result: {resumed: true}}; }
         };"#;
         std::fs::write(package.join("index.js"), script).unwrap();
@@ -7064,8 +7814,8 @@ mod tests {
             package.join("plugin.json"),
             serde_json::to_vec(&json!({
                 "schema_version":1,"id":"retry-test","name":"Retry Test","version":"1.0.0","description":"test","enabled":true,
-                "entrypoint":"index.js","entrypoint_sha256":digest,"capabilities":[],
-                "limits":{"timeout_ms":3000,"js_stage_timeout_ms":250,"max_operations":1,"max_concurrency":1,"memory_mb":8},
+                "entrypoint":"index.js","entrypoint_sha256":digest,"capabilities":["http.semantic"],
+                "limits":{"timeout_ms":3000,"js_stage_timeout_ms":250,"max_operations":2,"max_concurrency":1,"memory_mb":8},
                 "actions":[{"name":"run","description":"run","input_schema":{"type":"object"}}]
             }))
             .unwrap(),
@@ -7082,12 +7832,13 @@ mod tests {
             .run(project.id, "retry-test", "run", None, json!({}))
             .await
             .unwrap();
-        let failed = tokio::time::timeout(Duration::from_secs(2), async {
+        let failed = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let status = service.status(initial.id).unwrap();
                 if status.state == PluginJobState::Failed {
                     break status;
                 }
+                fail_on_terminal_job(&status, "expected initial analysis to fail");
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -7096,16 +7847,22 @@ mod tests {
         assert_eq!(failed.completed_operations, 0);
         assert!(failed.analysis_resume_available);
         assert_eq!(failed.analysis_checkpoint_status, "retained");
+        let execution_before_retry = service
+            .results(initial.id, PluginResultView::Full, 0, 25)
+            .unwrap()["result"]["execution"]
+            .clone();
+        assert_eq!(execution_before_retry["state"], "no_operations_planned");
         service
             .resume_analysis(initial.id, Some(1000))
             .await
             .unwrap();
-        let completed = tokio::time::timeout(Duration::from_secs(2), async {
+        let completed = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let status = service.status(initial.id).unwrap();
                 if status.state == PluginJobState::Completed {
                     break status;
                 }
+                fail_on_terminal_job(&status, "expected resumed analysis to complete");
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -7121,20 +7878,31 @@ mod tests {
             .results(initial.id, PluginResultView::Full, 0, 25)
             .unwrap();
         assert_eq!(result["result"]["analysis"]["result"]["resumed"], true);
+        assert_eq!(result["result"]["execution"], execution_before_retry);
+        let summary = service
+            .results(initial.id, PluginResultView::Summary, 0, 25)
+            .unwrap();
+        assert_eq!(
+            summary["summary"]["execution"]["evidence_exchange_count"],
+            0
+        );
+        for (key, value) in execution_before_retry.as_object().unwrap() {
+            if key != "evidence_exchange_ids" {
+                assert_eq!(&summary["summary"]["execution"][key], value);
+            }
+        }
 
         let cancelled_job = service
             .run(project.id, "retry-test", "run", None, json!({}))
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                if service
-                    .status(cancelled_job.id)
-                    .unwrap()
-                    .analysis_resume_available
-                {
+                let status = service.status(cancelled_job.id).unwrap();
+                if status.analysis_resume_available {
                     break;
                 }
+                fail_on_terminal_job(&status, "expected resumable failed analysis");
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -7145,12 +7913,13 @@ mod tests {
             .await
             .unwrap();
         service.cancel(cancelled_job.id).unwrap();
-        let cancelled = tokio::time::timeout(Duration::from_secs(2), async {
+        let cancelled = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let status = service.status(cancelled_job.id).unwrap();
                 if status.state == PluginJobState::Cancelled {
                     break status;
                 }
+                fail_on_terminal_job(&status, "expected resumed analysis cancellation");
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -7159,6 +7928,161 @@ mod tests {
         assert_eq!(cancelled.phase, PluginJobPhase::Finished);
         assert!(!cancelled.analysis_resume_available);
         assert_eq!(cancelled.analysis_checkpoint_status, "consumed");
+
+        let preview = service
+            .preview(
+                project.id,
+                "retry-test",
+                "run",
+                None,
+                json!({"fail_first":true}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(preview["planning_summary"]["selection"]["excluded"], 1);
+        let failed_operation_job = service
+            .run(
+                project.id,
+                "retry-test",
+                "run",
+                None,
+                json!({"fail_first":true}),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let status = service.status(failed_operation_job.id).unwrap();
+                if status.state == PluginJobState::Failed {
+                    break;
+                }
+                fail_on_terminal_job(&status, "expected operation failure");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let partial = service
+            .results(failed_operation_job.id, PluginResultView::Full, 0, 25)
+            .unwrap();
+        let execution = &partial["result"]["execution"];
+        assert_eq!(execution["planned_operations"], 2);
+        assert_eq!(execution["observed_operations"], 1);
+        assert_eq!(execution["operations_with_errors"], 1);
+        assert_eq!(execution["skipped_operations"], 1);
+        assert_eq!(execution["unobserved_operations"], 0);
+        assert_eq!(execution["state"], "partial");
+        assert_eq!(execution["evidence_exchange_ids"], json!([]));
+
+        let interrupted = service
+            .run(
+                project.id,
+                "retry-test",
+                "run",
+                None,
+                json!({"pause_second":true}),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let status = service.status(interrupted.id).unwrap();
+                if status.completed_operations == 1 {
+                    break;
+                }
+                fail_on_terminal_job(&status, "expected first operation before cancellation");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        service.cancel(interrupted.id).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let status = service.status(interrupted.id).unwrap();
+                if status.state == PluginJobState::Cancelled {
+                    break;
+                }
+                fail_on_terminal_job(&status, "expected interrupted job cancellation");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let partial = service
+            .results(interrupted.id, PluginResultView::Summary, 0, 25)
+            .unwrap();
+        assert_eq!(partial["summary"]["execution"]["state"], "partial");
+        assert_eq!(partial["summary"]["execution"]["observed_operations"], 1);
+        assert_eq!(partial["summary"]["execution"]["unobserved_operations"], 1);
+        assert!(!partial["job"]["analysis_resume_available"]
+            .as_bool()
+            .unwrap());
+
+        let mut timeout_plugin = service.plugins.get("retry-test").unwrap().as_ref().clone();
+        timeout_plugin.manifest.limits.timeout_ms = Some(5000);
+        timeout_plugin.manifest.limits.js_stage_timeout_ms = Some(10000);
+        timeout_plugin.script = Arc::from(
+            timeout_plugin
+                .script
+                .replace("Date.now() + 400", "Date.now() + 30000"),
+        );
+        let timeout_job = test_job(PluginJobState::Queued);
+        {
+            let mut view = timeout_job.view.write();
+            view.project_id = project.id;
+            view.plugin_id = "retry-test".into();
+            view.action = "run".into();
+        }
+        let timeout_id = timeout_job.view.read().id;
+        service.jobs.insert(timeout_id, timeout_job.clone());
+        let running_service = service.clone();
+        let running_job = timeout_job.clone();
+        let running = tokio::spawn(async move {
+            running_service
+                .execute_job(
+                    running_job,
+                    Arc::new(timeout_plugin),
+                    "run".into(),
+                    json!({"fail_first":true}),
+                )
+                .await;
+        });
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if timeout_job.analysis_checkpoint.lock().is_some() {
+                    break;
+                }
+                let status = service.status(timeout_id).unwrap();
+                fail_on_terminal_job(&status, "expected analysis checkpoint creation");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), running)
+            .await
+            .unwrap()
+            .unwrap();
+        let timed_out = service.status(timeout_id).unwrap();
+        assert_eq!(timed_out.state, PluginJobState::Failed);
+        assert!(!timed_out.analysis_resume_available);
+        assert_eq!(timed_out.analysis_checkpoint_status, "unavailable");
+        assert!(timeout_job.analysis_checkpoint.lock().is_none());
+        assert_eq!(
+            service
+                .resume_analysis(timeout_id, Some(2000))
+                .await
+                .unwrap_err()
+                .code(),
+            ErrorCode::Conflict
+        );
+        let partial = service
+            .results(timeout_id, PluginResultView::Summary, 0, 25)
+            .unwrap();
+        assert_eq!(partial["summary"]["execution"]["planned_operations"], 2);
+        assert_eq!(partial["summary"]["execution"]["observed_operations"], 1);
+        assert_eq!(partial["summary"]["execution"]["skipped_operations"], 1);
     }
 
     #[test]
@@ -7986,6 +8910,36 @@ mod tests {
     }
 
     #[test]
+    fn incompatible_preserved_racer_versions_are_blocked_before_use() {
+        let manifest = |id: &str, version: &str| {
+            serde_json::from_value::<PluginManifest>(json!({
+                "schema_version": 1,
+                "id": id,
+                "name": "Fixture",
+                "version": version,
+                "description": "test",
+                "enabled": true,
+                "entrypoint": "index.js",
+                "entrypoint_sha256": "0".repeat(64),
+                "capabilities": [],
+                "actions": [{"name":"run","description":"test","input_schema":{"type":"object"}}]
+            }))
+            .unwrap()
+        };
+
+        for version in ["0.6.3", "0.6.4-beta.1", "modified-copy"] {
+            let error =
+                validate_host_plugin_compatibility(&manifest("racer", version)).unwrap_err();
+            assert_eq!(error.code(), ErrorCode::ProtocolIncompatible);
+            assert!(error.to_string().contains("version 0.6.4 or newer"));
+        }
+        for version in ["0.6.4", "0.6.4+local", "0.7.0", "1.0.0"] {
+            validate_host_plugin_compatibility(&manifest("racer", version)).unwrap();
+        }
+        validate_host_plugin_compatibility(&manifest("custom-racer", "0.1.0")).unwrap();
+    }
+
+    #[test]
     fn completed_job_retention_is_bounded_without_removing_active_jobs() {
         let jobs = DashMap::new();
         for _ in 0..MAX_RETAINED_JOBS {
@@ -8197,12 +9151,44 @@ mod tests {
             response_bytes: 2,
             truncated: false,
             read_outcome: crate::reply::RawReadOutcome::Complete,
+            response_complete: true,
+            transport_error: None,
             responses: vec![],
             response_base64: None,
         };
         let value = plugin_raw_observation(&response, Some(b"ok".to_vec())).unwrap();
         assert_eq!(value["response_transcript_base64"], "b2s=");
         assert_eq!(value["response_transcript_truncated"], false);
+        assert!(raw_response_error(&response).is_none());
+    }
+
+    #[test]
+    fn retained_raw_transport_failures_are_not_clean_plugin_observations() {
+        let mut response = crate::reply::RawReplyResult {
+            exchange_id: Some(ExchangeId(9)),
+            status_code: Some(200),
+            response_bytes: 2,
+            truncated: false,
+            read_outcome: crate::reply::RawReadOutcome::Error,
+            response_complete: true,
+            transport_error: Some("connection closed unexpectedly".into()),
+            responses: vec![],
+            response_base64: None,
+        };
+        let value = plugin_raw_observation(&response, Some(b"ok".to_vec())).unwrap();
+        assert_eq!(value["exchange_id"], 9);
+        assert_eq!(value["status_code"], 200);
+        assert_eq!(value["response_transcript_base64"], "b2s=");
+        assert_eq!(
+            raw_response_error(&response).as_deref(),
+            Some("connection closed unexpectedly")
+        );
+        response.transport_error = None;
+        response.response_complete = false;
+        assert!(raw_response_error(&response).is_some());
+        response.response_complete = true;
+        response.truncated = true;
+        assert!(raw_response_error(&response).is_some());
     }
 
     #[test]

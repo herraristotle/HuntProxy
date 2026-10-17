@@ -83,6 +83,17 @@ const MAX_REGEX_LEN: usize = 512;
 const MAX_IN_LIST: usize = 64;
 const MAX_HEADER_NAME_LEN: usize = 256;
 
+/// Shared guidance for adapters that surface history-query errors.
+pub const HISTORY_QUERY_SYNTAX: &str = "Use field:value, field:~text, or field>=value (no colon before comparisons); combine terms with AND, OR, NOT and parentheses. Quote values containing spaces. Example: host:example.com status>=400";
+
+pub(crate) fn query_error(message: impl Into<String>) -> DomainError {
+    DomainError::with_details(
+        crate::domain::ErrorCode::InvalidArgument,
+        message,
+        serde_json::json!({"kind": "history_query", "syntax": HISTORY_QUERY_SYNTAX}),
+    )
+}
+
 pub fn validate_filter(node: &FilterNode) -> DomainResult<()> {
     validate_filter_depth(node, 0, &mut 0)
 }
@@ -114,7 +125,9 @@ pub fn uses_response_body_search(node: &FilterNode) -> bool {
 
 fn validate_filter_depth(node: &FilterNode, depth: usize, terms: &mut usize) -> DomainResult<()> {
     if depth > MAX_DEPTH {
-        return Err(DomainError::invalid("filter nesting too deep"));
+        return Err(query_error(format!(
+            "filter nesting too deep; use at most {MAX_DEPTH} nested Boolean levels"
+        )));
     }
     match node {
         FilterNode::And { and } | FilterNode::Or { or: and } => {
@@ -131,16 +144,18 @@ fn validate_filter_depth(node: &FilterNode, depth: usize, terms: &mut usize) -> 
         } => {
             *terms += 1;
             if *terms > MAX_TERMS {
-                return Err(DomainError::invalid("too many filter terms"));
-            }
-            if !ALLOWED_FIELDS.contains(&field.as_str()) {
-                return Err(DomainError::invalid(format!(
-                    "unknown filter field: {field}"
+                return Err(query_error(format!(
+                    "too many filter terms; use at most {MAX_TERMS} field terms (each bare word searches six fields)"
                 )));
             }
+            if !ALLOWED_FIELDS.contains(&field.as_str()) {
+                return Err(unknown_field_error(field, op));
+            }
             if !ALLOWED_OPS.contains(&op.as_str()) {
-                return Err(DomainError::invalid(format!(
-                    "unknown filter operator: {op}"
+                return Err(query_error(format!(
+                    "unknown filter operator: {op} for {field}; use {}. Text example: {}",
+                    ALLOWED_OPS.join(", "),
+                    field_example(field),
                 )));
             }
             if HEADER_FIELDS.contains(&field.as_str()) {
@@ -191,15 +206,59 @@ fn validate_filter_depth(node: &FilterNode, depth: usize, terms: &mut usize) -> 
     Ok(())
 }
 
-fn validate_regex_pattern(pattern: &str) -> DomainResult<()> {
-    if pattern.len() > MAX_REGEX_LEN {
-        return Err(DomainError::invalid(format!(
-            "regex pattern too long (max {MAX_REGEX_LEN} bytes)"
-        )));
+fn field_example(field: &str) -> String {
+    match field {
+        "time" => "time>2026-10-12T00:00:00Z".into(),
+        "status" => "status>=400".into(),
+        "duration" => "duration>=1000".into(),
+        "request_size" | "response_size" => format!("{field}>1024"),
+        "request" => "request:~text".into(),
+        _ => format!("{field}:value"),
     }
-    regex::Regex::new(pattern)
-        .map_err(|error| DomainError::invalid(format!("invalid regex pattern: {error}")))?;
-    Ok(())
+}
+
+fn unknown_field_error(field: &str, op: &str) -> DomainError {
+    if let Some(correct) = field.strip_suffix(':').filter(|field| {
+        ALLOWED_FIELDS.contains(field) && matches!(op, "gt" | "gte" | "lt" | "lte" | "ne")
+    }) {
+        if correct == "request" {
+            return query_error(
+                "unknown filter field: request:; request supports only contains searches. Use request:~text",
+            );
+        }
+        if correct == "label" && !matches!(op, "eq" | "ne") {
+            return query_error(
+                "unknown filter field: label:; label does not support ordering comparisons. Use label:reviewed or label:~review",
+            );
+        }
+        let operator = match op {
+            "gt" => ">",
+            "gte" => ">=",
+            "lt" => "<",
+            "lte" => "<=",
+            "ne" => "!=",
+            _ => ":",
+        };
+        return query_error(format!(
+            "unknown filter field: {field}; remove the colon before `{operator}`: use `{correct}{operator}VALUE`. Example: {}",
+            field_example(correct),
+        ));
+    }
+    let correction = match field {
+        "status_code" => Some("status"),
+        "started_at" => Some("time"),
+        "duration_ms" => Some("duration"),
+        "request_length" => Some("request_size"),
+        "response_length" => Some("response_size"),
+        _ => None,
+    };
+    let hint = correction
+        .map(|correct| format!("use {correct}; example: {}. ", field_example(correct)))
+        .unwrap_or_default();
+    query_error(format!(
+        "unknown filter field: {field}; {hint}Supported fields: {}",
+        ALLOWED_FIELDS.join(", "),
+    ))
 }
 
 /// Compile filter AST to parameterized SQL WHERE clause (without leading WHERE).
@@ -265,7 +324,7 @@ fn col(field: &str) -> DomainResult<&'static str> {
         "error" => "error_message",
         "label" => "exchange_id", // special-cased
         other => {
-            return Err(DomainError::invalid(format!("unsupported field {other}")));
+            return Err(query_error(format!("unsupported field {other}")));
         }
     })
 }
@@ -292,53 +351,54 @@ fn compile_term(
     let c = col(field)?;
     match op {
         "eq" => {
-            binds.push(value_as_string(value)?);
+            binds.push(value_as_string(field, value)?);
             Ok(format!("{c}=?{}", binds.len()))
         }
         // `IS NOT` keeps rows whose column is NULL (for example failed
         // exchanges with no status); plain `!=` would silently drop them.
         "ne" => {
-            binds.push(value_as_string(value)?);
-            Ok(format!("{c} IS NOT ?{}", binds.len()))
+            binds.push(value_as_string(field, value)?);
+            Ok(format!("{c}!=?{}", binds.len()))
         }
         "gt" => {
-            binds.push(value_as_string(value)?);
+            binds.push(value_as_string(field, value)?);
             Ok(format!("{c}>?{}", binds.len()))
         }
         "gte" => {
-            binds.push(value_as_string(value)?);
+            binds.push(value_as_string(field, value)?);
             Ok(format!("{c}>=?{}", binds.len()))
         }
         "lt" => {
-            binds.push(value_as_string(value)?);
+            binds.push(value_as_string(field, value)?);
             Ok(format!("{c}<?{}", binds.len()))
         }
         "lte" => {
-            binds.push(value_as_string(value)?);
+            binds.push(value_as_string(field, value)?);
             Ok(format!("{c}<=?{}", binds.len()))
         }
         "contains" => {
-            binds.push(format!("%{}%", escape_like(&value_as_string(value)?)));
+            binds.push(format!(
+                "%{}%",
+                escape_like(&value_as_string(field, value)?)
+            ));
             Ok(format!("{c} LIKE ?{} ESCAPE '\\'", binds.len()))
         }
         "starts_with" => {
-            binds.push(format!("{}%", escape_like(&value_as_string(value)?)));
+            binds.push(format!("{}%", escape_like(&value_as_string(field, value)?)));
             Ok(format!("{c} LIKE ?{} ESCAPE '\\'", binds.len()))
         }
         "ends_with" => {
-            binds.push(format!("%{}", escape_like(&value_as_string(value)?)));
+            binds.push(format!("%{}", escape_like(&value_as_string(field, value)?)));
             Ok(format!("{c} LIKE ?{} ESCAPE '\\'", binds.len()))
         }
         "in" => {
-            let arr = value
-                .as_array()
-                .ok_or_else(|| DomainError::invalid("in operator requires array"))?;
+            let arr = value.as_array().ok_or_else(|| in_value_error(field))?;
             if arr.is_empty() {
                 return Ok("1=0".into());
             }
             let mut placeholders = Vec::new();
             for v in arr {
-                binds.push(value_as_string(v)?);
+                binds.push(value_as_string(field, v)?);
                 placeholders.push(format!("?{}", binds.len()));
             }
             Ok(format!("{c} IN ({})", placeholders.join(",")))
@@ -351,17 +411,7 @@ fn compile_term(
                 Ok(format!("{c} IS NULL"))
             }
         }
-        // The registered `regexp` function returns false for NULL inputs, so
-        // `NOT (col REGEXP ...)` keeps NULL rows - matching `ne` semantics.
-        "regex" => {
-            binds.push(value_as_string(value)?);
-            Ok(format!("{c} REGEXP ?{}", binds.len()))
-        }
-        "nregex" => {
-            binds.push(value_as_string(value)?);
-            Ok(format!("NOT ({c} REGEXP ?{})", binds.len()))
-        }
-        other => Err(DomainError::invalid(format!("unsupported op {other}"))),
+        other => Err(query_error(format!("unsupported op {other}"))),
     }
 }
 
@@ -374,46 +424,15 @@ fn compile_request_term(
     value: &serde_json::Value,
     binds: &mut Vec<String>,
 ) -> DomainResult<String> {
-    let (side, body_column, body_fn, target_op) = match (field, op) {
-        (field @ ("request" | "response"), "contains") => {
-            let side = if field == "request" {
-                "request"
-            } else {
-                "response"
-            };
-            let value = value_as_string(value)?;
-            binds.push(format!("%{}%", escape_like(&value)));
-            binds.push(value);
-            (
-                side,
-                format!("{field}_body_id"),
-                "huntproxy_body_contains",
-                "LIKE ESCAPE",
-            )
-        }
-        (field @ ("request" | "response"), "regex") => {
-            let side = if field == "request" {
-                "request"
-            } else {
-                "response"
-            };
-            let value = value_as_string(value)?;
-            binds.push(value.clone());
-            binds.push(value);
-            (
-                side,
-                format!("{field}_body_id"),
-                "huntproxy_body_regex",
-                "REGEXP",
-            )
-        }
-        _ => {
-            return Err(DomainError::invalid(format!(
-                "{field} supports only the contains and regex operators; use {field}:~text"
-            )))
-        }
-    };
-    let pattern_index = binds.len() - 1;
+    if op != "contains" {
+        return Err(query_error(
+            "request supports only the contains operator; use request:~text",
+        ));
+    }
+    let value = value_as_string("request", value)?;
+    binds.push(format!("%{}%", escape_like(&value)));
+    let like_index = binds.len();
+    binds.push(value);
     let body_index = binds.len();
     // `target_op` carries the comparison plus its operands: LIKE needs the
     // ESCAPE clause, REGEXP does not.
@@ -558,7 +577,7 @@ fn compile_label_term(
     let prefix = "EXISTS (SELECT 1 FROM exchange_labels el JOIN labels l ON l.id=el.label_id AND l.project_id=el.project_id WHERE el.project_id=exchanges.project_id AND el.exchange_id=exchanges.exchange_id";
     match op {
         "eq" | "ne" => {
-            binds.push(value_as_string(value)?);
+            binds.push(value_as_string("label", value)?);
             let exists = format!("{prefix} AND l.name=?{})", binds.len());
             Ok(if op == "ne" {
                 format!("NOT ({exists})")
@@ -567,7 +586,7 @@ fn compile_label_term(
             })
         }
         "contains" | "starts_with" | "ends_with" => {
-            let value = escape_like(&value_as_string(value)?);
+            let value = escape_like(&value_as_string("label", value)?);
             let pattern = match op {
                 "contains" => format!("%{value}%"),
                 "starts_with" => format!("{value}%"),
@@ -582,13 +601,13 @@ fn compile_label_term(
         "in" => {
             let values = value
                 .as_array()
-                .ok_or_else(|| DomainError::invalid("in operator requires array"))?;
+                .ok_or_else(|| in_value_error("label"))?;
             if values.is_empty() {
                 return Ok("1=0".into());
             }
             let mut placeholders = Vec::with_capacity(values.len());
             for value in values {
-                binds.push(value_as_string(value)?);
+                binds.push(value_as_string("label", value)?);
                 placeholders.push(format!("?{}", binds.len()));
             }
             Ok(format!(
@@ -604,8 +623,8 @@ fn compile_label_term(
                 format!("NOT ({clause})")
             })
         }
-        _ => Err(DomainError::invalid(format!(
-            "operator {op} is not supported for label"
+        _ => Err(query_error(format!(
+            "operator {op} is not supported for label; use eq, ne, contains, starts_with, ends_with, in, or exists. Text example: label:reviewed"
         ))),
     }
 }
@@ -617,14 +636,23 @@ fn escape_like(value: &str) -> String {
         .replace('_', "\\_")
 }
 
-fn value_as_string(v: &serde_json::Value) -> DomainResult<String> {
+fn value_as_string(field: &str, v: &serde_json::Value) -> DomainResult<String> {
     match v {
         serde_json::Value::String(s) => Ok(s.clone()),
         serde_json::Value::Number(n) => Ok(n.to_string()),
         serde_json::Value::Bool(b) => Ok(b.to_string()),
         serde_json::Value::Null => Ok(String::new()),
-        _ => Err(DomainError::invalid("unsupported filter value type")),
+        _ => Err(query_error(format!(
+            "unsupported filter value type for {field}; use a string, number, boolean, or null (in requires an array of these values). Text example: {}",
+            field_example(field),
+        ))),
     }
+}
+
+fn in_value_error(field: &str) -> DomainError {
+    query_error(format!(
+        "in operator requires an array for {field}; JSON example: {{\"field\":\"{field}\",\"op\":\"in\",\"value\":[\"first\",\"second\"]}}. Text queries use OR: {field}:first OR {field}:second"
+    ))
 }
 
 /// Small text syntax: `host:example.com method:GET status>=400`.
@@ -635,7 +663,9 @@ fn value_as_string(v: &serde_json::Value) -> DomainResult<String> {
 /// `AND`, `OR`, `NOT`, parentheses, and quoted values are supported.
 pub fn parse_text_query(input: &str) -> DomainResult<FilterNode> {
     if input.len() > MAX_INPUT_LEN {
-        return Err(DomainError::invalid("filter text too long"));
+        return Err(query_error(format!(
+            "filter text too long; use at most {MAX_INPUT_LEN} bytes"
+        )));
     }
     let input = input.trim();
     if input.is_empty() {
@@ -720,7 +750,9 @@ fn tokenize_query(input: &str) -> DomainResult<Vec<QueryToken>> {
         return Err(DomainError::invalid("unterminated [ in history filter"));
     }
     if quoted {
-        return Err(DomainError::invalid("unterminated quote in history filter"));
+        return Err(query_error(
+            "unterminated quote in history filter; close the double quote. Example: path:~\"monthly report\"; escape a literal quote as \\\"",
+        ));
     }
     if escaped {
         current.push('\\');
@@ -745,7 +777,9 @@ impl QueryParser {
     fn parse(mut self) -> DomainResult<FilterNode> {
         let node = self.parse_or()?;
         if self.position != self.tokens.len() {
-            return Err(DomainError::invalid("unexpected token in history filter"));
+            return Err(query_error(
+                "unexpected token in history filter; check matching parentheses. Example: (method:GET OR method:POST) status>=400",
+            ));
         }
         Ok(node)
     }
@@ -790,49 +824,26 @@ impl QueryParser {
 
     fn parse_primary(&mut self) -> DomainResult<FilterNode> {
         match self.next() {
-            Some(QueryToken::Text(text)) => {
-                let is_exists = text.eq_ignore_ascii_case("has");
-                let is_missing = text.eq_ignore_ascii_case("missing");
-                if (is_exists || is_missing) && matches!(self.peek(), Some(QueryToken::LeftParen)) {
-                    self.position += 1; // consume '('
-                    let field = match self.next() {
-                        Some(QueryToken::Text(field)) => field,
-                        _ => {
-                            return Err(DomainError::invalid(
-                                "expected a field name after has(/missing(",
-                            ))
-                        }
-                    };
-                    match self.next() {
-                        Some(QueryToken::RightParen) => {}
-                        _ => {
-                            return Err(DomainError::invalid(
-                                "missing closing parenthesis after has(/missing(",
-                            ))
-                        }
-                    }
-                    let term = make_term(&field, "exists", serde_json::json!(is_exists)).map_err(
-                        |error| DomainError::invalid(format!("filter parse error: {error}")),
-                    )?;
-                    return Ok(term);
-                }
-                parse_one_term(&text).map_err(|error| {
-                    DomainError::invalid(format!("filter parse error at `{text}`: {error}"))
-                })
-            }
+            Some(QueryToken::Text(text)) => parse_one_term(&text).map_err(|error| {
+                query_error(format!("filter parse error at `{text}`: {error}"))
+            }),
             Some(QueryToken::LeftParen) => {
                 let node = self.parse_or()?;
                 match self.next() {
                     Some(QueryToken::RightParen) => Ok(node),
-                    _ => Err(DomainError::invalid(
-                        "missing closing parenthesis in history filter",
+                    _ => Err(query_error(
+                        "missing closing parenthesis in history filter; close each group with `)`. Example: (method:GET OR method:POST) status>=400",
                     )),
                 }
             }
             Some(QueryToken::RightParen) => {
-                Err(DomainError::invalid("unexpected closing parenthesis"))
+                Err(query_error(
+                    "unexpected closing parenthesis; groups must contain a term and match `(` with `)`. Example: (method:GET OR method:POST)",
+                ))
             }
-            None => Err(DomainError::invalid("missing term in history filter")),
+            None => Err(query_error(
+                "missing term in history filter; AND, OR and NOT require a following term. Example: method:GET OR method:POST",
+            )),
         }
     }
 
@@ -1209,6 +1220,140 @@ mod tests {
         assert!(parse_text_query("method:PUT OR").is_err());
         assert!(parse_text_query("(method:PUT").is_err());
         assert!(parse_text_query(r#"request:~"unfinished"#).is_err());
+    }
+
+    #[test]
+    fn colon_comparison_errors_give_a_valid_field_specific_correction() {
+        for (field, value) in [
+            ("time", "2026-10-12T00:00:00Z"),
+            ("status", "400"),
+            ("duration", "1000"),
+            ("request_size", "1024"),
+            ("response_size", "1024"),
+        ] {
+            for op in [">", ">=", "<", "<=", "!="] {
+                let invalid = parse_text_query(&format!("{field}:{op}{value}")).unwrap();
+                let error = filter_to_sql(&invalid).unwrap_err();
+                assert_eq!(error.code(), crate::domain::ErrorCode::InvalidArgument);
+                let envelope = crate::domain::ErrorEnvelope::from(&error);
+                assert_eq!(envelope.details.as_ref().unwrap()["kind"], "history_query");
+                assert_eq!(
+                    envelope.details.as_ref().unwrap()["syntax"],
+                    HISTORY_QUERY_SYNTAX
+                );
+                let message = error.to_string();
+                assert!(message.contains("remove the colon"), "{message}");
+                assert!(message.contains(&format!("{field}{op}VALUE")), "{message}");
+                let corrected = parse_text_query(&format!("{field}{op}{value}")).unwrap();
+                let (_, binds) = filter_to_sql(&corrected).unwrap();
+                assert_eq!(binds, [value]);
+            }
+        }
+    }
+
+    #[test]
+    fn unsupported_fields_operators_and_value_shapes_explain_accepted_forms() {
+        for (field, expected) in [
+            ("status_code", "status>=400"),
+            ("started_at", "time>2026-10-12T00:00:00Z"),
+            ("not_a_field", "Supported fields: exchange_id, host"),
+        ] {
+            let node = term(field, "eq", "value");
+            assert!(filter_to_sql(&node)
+                .unwrap_err()
+                .to_string()
+                .contains(expected));
+        }
+        assert!(filter_to_sql(&term("status", "between", "400"))
+            .unwrap_err()
+            .to_string()
+            .contains("Text example: status>=400"));
+        assert!(filter_to_sql(&term("request", "eq", "text"))
+            .unwrap_err()
+            .to_string()
+            .contains("request:~text"));
+        assert!(filter_to_sql(&term("label", "gt", "reviewed"))
+            .unwrap_err()
+            .to_string()
+            .contains("label:reviewed"));
+        for field in ["host", "label"] {
+            assert!(filter_to_sql(&term(field, "in", "first"))
+                .unwrap_err()
+                .to_string()
+                .contains(&format!("{field}:first OR {field}:second")));
+        }
+        let bad_value = FilterNode::Term {
+            field: "status".into(),
+            op: "eq".into(),
+            value: serde_json::json!({"value": 400}),
+        };
+        assert!(filter_to_sql(&bad_value)
+            .unwrap_err()
+            .to_string()
+            .contains("for status"));
+    }
+
+    #[test]
+    fn syntax_failures_explain_quotes_groups_and_missing_operands() {
+        for (input, expected) in [
+            (r#"path:~"monthly report"#, "close the double quote"),
+            ("(method:GET", "close each group"),
+            ("method:GET)", "matching parentheses"),
+            ("()", "groups must contain a term"),
+            ("method:GET OR", "require a following term"),
+            ("NOT", "require a following term"),
+        ] {
+            let error = parse_text_query(input).unwrap_err();
+            assert_eq!(error.code(), crate::domain::ErrorCode::InvalidArgument);
+            assert!(error.to_string().contains(expected), "{input}: {error}");
+            assert!(error.to_string().contains("Example:"));
+        }
+    }
+
+    #[test]
+    fn documented_queries_keep_exact_bind_values_and_boolean_precedence() {
+        for (input, expected) in [
+            (
+                "host:example.com method:GET status>=400",
+                vec!["example.com", "GET", "400"],
+            ),
+            (r#"path:~"monthly report""#, vec!["%monthly report%"]),
+            (
+                r#"request:~"monthly report""#,
+                vec!["%monthly report%", "monthly report"],
+            ),
+            (
+                "time>2026-10-12T00:00:00Z time<=2026-10-13T00:00:00Z",
+                vec!["2026-10-12T00:00:00Z", "2026-10-13T00:00:00Z"],
+            ),
+            ("duration>=1000 response_size>1024", vec!["1000", "1024"]),
+            (
+                "(status:200 OR status:304) NOT path:~.js",
+                vec!["200", "304", "%.js%"],
+            ),
+            ("path:/api/*", vec!["/api/%"]),
+            ("path:*.js", vec!["%.js"]),
+            ("path:*report*", vec!["%report%"]),
+            // These permissive forms already compile; diagnostic changes must not narrow them.
+            ("status>=many", vec!["many"]),
+            (r#"path:"001""#, vec!["1"]),
+            (r#"path:"*monthly*""#, vec!["%monthly%"]),
+            (
+                "host:example.com and method:GET",
+                vec!["example.com", "GET"],
+            ),
+        ] {
+            let filter = parse_text_query(input).unwrap();
+            let (_, binds) = filter_to_sql(&filter).unwrap();
+            assert_eq!(binds, expected, "{input}");
+        }
+        let filter = parse_text_query("host:example.com OR method:GET NOT status:404").unwrap();
+        let (sql, binds) = filter_to_sql(&filter).unwrap();
+        assert_eq!(sql, "(host=?1 OR (method=?2 AND NOT (status_code=?3)))");
+        assert_eq!(binds, ["example.com", "GET", "404"]);
+        let (sql, binds) = filter_to_sql(&parse_text_query("").unwrap()).unwrap();
+        assert_eq!(sql, "1=1");
+        assert!(binds.is_empty());
     }
 
     #[test]

@@ -66,9 +66,20 @@ impl Default for ActivityTracker {
     }
 }
 
-pub async fn run_daemon(config: Config) -> DomainResult<()> {
+pub async fn run_daemon(mut config: Config) -> DomainResult<()> {
     config.ensure_layout()?;
+    // A managed child runs under its parent's maintenance lock. Manual starts
+    // join the same lock, so they cannot open a database during an update.
+    let startup_lock = if std::env::var_os("HUNTPROXY_DAEMONIZED").is_some() {
+        None
+    } else {
+        Some(acquire_bootstrap_lock(&config).await?)
+    };
+    if startup_lock.is_some() {
+        recover_installation(&config, true).await?;
+    }
     let _daemon_lock = acquire_daemon_lock(&config)?;
+    prepare_release_runtime(&mut config).await?;
 
     let state = bootstrap_state(config.clone()).await?;
     let shutdown = state.shutdown.clone();
@@ -181,6 +192,7 @@ pub async fn run_daemon(config: Config) -> DomainResult<()> {
         proxy = %config.proxy_listen,
         "daemon ready"
     );
+    drop(startup_lock);
 
     let server_error = tokio::select! {
         _ = shutdown.cancelled() => None,
@@ -227,8 +239,16 @@ pub async fn run_daemon(config: Config) -> DomainResult<()> {
             state.browser.force_stop_all().await;
         }
     }
-    while servers.join_next().await.is_some() {}
-    let _ = flow_subscriber.await;
+    if tokio::time::timeout(Duration::from_secs(5), async {
+        while servers.join_next().await.is_some() {}
+    })
+    .await
+    .is_err()
+    {
+        tracing::warn!("server shutdown timed out; closing remaining connections");
+        servers.abort_all();
+        while servers.join_next().await.is_some() {}
+    }
     if let Some(idle_monitor) = idle_monitor {
         let _ = idle_monitor.await;
     }
@@ -342,14 +362,20 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
             .ok()
             .map(|directory| directory.join("index.js"))
     });
-    let browser = Arc::new(BrowserService::new_with_proxy_and_ca(
-        db.clone(),
-        config.node_path.clone(),
-        managed_worker,
-        format!("http://{}", config.proxy_listen),
-        Some(config.ca_cert_path()),
-        config.browser_profiles_dir(),
-    ));
+    let browser = Arc::new(
+        BrowserService::new_with_proxy_and_ca(
+            db.clone(),
+            config.node_path.clone(),
+            managed_worker,
+            format!("http://{}", config.proxy_listen),
+            Some(config.ca_cert_path()),
+            config.browser_profiles_dir(),
+        )
+        .with_runtime_paths(
+            config.browser_playwright_core_path.clone(),
+            config.browser_chromium_path.clone(),
+        ),
+    );
     let plugins = Arc::new(crate::plugins::PluginService::load_with_browser(
         config.plugin_dir.clone(),
         db.clone(),
@@ -391,7 +417,7 @@ pub async fn bootstrap_state(config: Config) -> DomainResult<Arc<AppState>> {
 }
 
 #[derive(Debug)]
-struct DaemonLock {
+pub struct DaemonLock {
     #[cfg(unix)]
     _file: nix::fcntl::Flock<File>,
     #[cfg(not(unix))]
@@ -430,14 +456,264 @@ fn acquire_daemon_lock(config: &Config) -> DomainResult<DaemonLock> {
 
 fn cleanup_daemon_files(config: &Config) {
     let _ = std::fs::remove_file(config.socket_path());
+    // Keep the advisory-lock inode stable across daemon replacements.
+    #[cfg(not(unix))]
     let _ = std::fs::remove_file(config.daemon_lock_path());
+}
+
+/// Ensure the configured daemon is ready before a new operation is dispatched.
+pub async fn ensure_daemon(config: &Config) -> DomainResult<()> {
+    if daemon_health(config).await.is_ok() {
+        return Ok(());
+    }
+    if !config.auto_start_daemon {
+        return Err(DomainError::new(
+            ErrorCode::DaemonNotRunning,
+            "daemon not running; call huntproxy_restart or start with HuntProxy serve",
+        ));
+    }
+    let _bootstrap_lock = acquire_bootstrap_lock(config).await?;
+    recover_installation(config, true).await?;
+    start_daemon_locked(config).await
+}
+
+/// Explicit restart also works after a crash, idle shutdown, or explicit stop.
+/// Serializing the whole stop/start sequence prevents another bridge from
+/// creating a replacement daemon while this operation is still stopping it.
+pub async fn restart_daemon(config: &Config) -> DomainResult<()> {
+    let _bootstrap_lock = acquire_bootstrap_lock(config).await?;
+    match stop_daemon(config).await {
+        Ok(()) => {}
+        Err(error) if error.code() == ErrorCode::DaemonNotRunning => {}
+        Err(error) => return Err(error),
+    }
+    recover_installation(config, true).await?;
+    start_daemon_locked(config).await
+}
+
+pub async fn acquire_bootstrap_lock(config: &Config) -> DomainResult<DaemonLock> {
+    config.ensure_layout()?;
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(config.bootstrap_lock_path())
+        .map_err(|error| DomainError::new(ErrorCode::StorageError, error.to_string()))?;
+    #[cfg(unix)]
+    let file = tokio::task::spawn_blocking(move || {
+        nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusive)
+            .map_err(|(_, error)| error)
+    })
+    .await
+    .map_err(|error| {
+        DomainError::new(ErrorCode::Internal, format!("bootstrap lock task: {error}"))
+    })?
+    .map_err(|error| {
+        DomainError::new(ErrorCode::StorageError, format!("bootstrap lock: {error}"))
+    })?;
+    Ok(DaemonLock { _file: file })
+}
+
+/// Complete an interrupted update before opening a project database.
+/// Auto-start parents recover before spawning a child under their lock.
+pub async fn recover_installation(config: &Config, bootstrap_lock_held: bool) -> DomainResult<()> {
+    if !config.runtime_dir.join("update-journal.json").exists() {
+        return Ok(());
+    }
+    let _lock = if bootstrap_lock_held {
+        None
+    } else {
+        Some(acquire_bootstrap_lock(config).await?)
+    };
+    crate::update_journal::recover(config).await
+}
+
+pub async fn prepare_release_runtime(config: &mut Config) -> DomainResult<()> {
+    let prepared = crate::installation::prepare(config).await?;
+    config.node_path = Some(prepared.node_path);
+    config.browser_worker_path = Some(prepared.worker_path);
+    config.browser_playwright_core_path = Some(prepared.playwright_core_path);
+    config.browser_chromium_path = Some(prepared.chromium_path);
+    if !prepared.preserved_plugins.is_empty() {
+        tracing::warn!(plugins = ?prepared.preserved_plugins, "preserved customized first-party plugin packages");
+    }
+    Ok(())
+}
+
+async fn start_daemon_locked(config: &Config) -> DomainResult<()> {
+    let binary = installed_executable()?;
+    start_daemon_binary(config, &binary).await
+}
+
+/// Start the installed executable while the caller holds the bootstrap lock.
+pub(crate) async fn start_daemon_binary(
+    config: &Config,
+    binary: &std::path::Path,
+) -> DomainResult<()> {
+    if daemon_health(config).await.is_ok() {
+        return Ok(());
+    }
+    let startup_log_path = config.daemon_startup_log_path();
+    let mut options = OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let startup_stdout = options.open(&startup_log_path).map_err(|error| {
+        DomainError::new(
+            ErrorCode::StorageError,
+            format!("startup log {}: {error}", startup_log_path.display()),
+        )
+    })?;
+    let startup_stderr = startup_stdout.try_clone().map_err(|error| {
+        DomainError::new(ErrorCode::StorageError, format!("startup log: {error}"))
+    })?;
+    let mut command = std::process::Command::new(binary);
+    command
+        .arg("serve")
+        .arg("--data-dir")
+        .arg(&config.data_dir)
+        .env("HUNTPROXY_DAEMONIZED", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(startup_stdout))
+        .stderr(std::process::Stdio::from(startup_stderr));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    let exec_deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    let mut child = loop {
+        match command.spawn() {
+            Ok(child) => break child,
+            Err(error)
+                if error.raw_os_error() == Some(libc::ETXTBSY)
+                    && tokio::time::Instant::now() < exec_deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(error) => {
+                return Err(DomainError::new(
+                    ErrorCode::Unavailable,
+                    format!("auto-start failed: {error}"),
+                ));
+            }
+        }
+    };
+    let child_pid = child.id();
+    let (finished, mut completion) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = finished.send(child.wait());
+    });
+    // First startup may provision a private browser runtime. Exit failures
+    // still return immediately instead of waiting for the provisioning limit.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(900);
+    let mut exited = false;
+    while tokio::time::Instant::now() < deadline {
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {},
+            _ = &mut completion => {
+                exited = true;
+                break;
+            }
+        }
+        if daemon_health(config).await.is_ok() {
+            return Ok(());
+        }
+    }
+    #[cfg(unix)]
+    if !exited {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(child_pid as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        );
+        let _ = tokio::time::timeout(Duration::from_secs(15), completion).await;
+    }
+    let detail = std::fs::read(&startup_log_path)
+        .ok()
+        .map(|bytes| {
+            let start = bytes.len().saturating_sub(4096);
+            String::from_utf8_lossy(&bytes[start..]).into_owned()
+        })
+        .filter(|output| !output.trim().is_empty())
+        .map(|output| format!("\nlast startup output:\n{}", output.trim_end()))
+        .unwrap_or_default();
+    Err(DomainError::new(
+        ErrorCode::Unavailable,
+        format!(
+            "daemon did not become ready; check {}{detail}",
+            startup_log_path.display()
+        ),
+    ))
+}
+
+fn installed_executable() -> DomainResult<std::path::PathBuf> {
+    let path = std::env::current_exe()
+        .map_err(|error| DomainError::new(ErrorCode::Internal, error.to_string()))?;
+    if path.is_file() {
+        return Ok(path);
+    }
+    // Linux retains the old process after an atomic update. Resolve its
+    // original installation path so an existing MCP bridge can recover the
+    // newly installed daemon instead of trying to execute a deleted inode.
+    #[cfg(target_os = "linux")]
+    if let Some(name) = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(" (deleted)"))
+    {
+        let installed = path.with_file_name(name);
+        if installed.is_file() {
+            return Ok(installed);
+        }
+    }
+    Err(DomainError::new(
+        ErrorCode::Unavailable,
+        "the installed HuntProxy executable is unavailable",
+    ))
+}
+
+async fn daemon_health(config: &Config) -> DomainResult<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let health = async {
+        #[cfg(unix)]
+        let mut stream = tokio::net::UnixStream::connect(config.socket_path()).await?;
+        #[cfg(not(unix))]
+        let mut stream = tokio::net::TcpStream::connect(config.api_listen).await?;
+        stream
+            .write_all(
+                b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            )
+            .await?;
+        let mut response = Vec::new();
+        (&mut stream).take(4096).read_to_end(&mut response).await?;
+        if response.starts_with(b"HTTP/1.1 2") || response.starts_with(b"HTTP/1.0 2") {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("daemon health check failed"))
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(1), health)
+        .await
+        .map_err(|_| DomainError::new(ErrorCode::Timeout, "daemon health check timed out"))?
+        .map_err(|error| DomainError::new(ErrorCode::DaemonNotRunning, error.to_string()))
 }
 
 pub async fn stop_daemon(config: &Config) -> DomainResult<()> {
     #[cfg(unix)]
     if request_private_shutdown(config).await.is_ok() {
-        for _ in 0..50 {
-            if !config.socket_path().exists() && !config.daemon_lock_path().exists() {
+        for _ in 0..150 {
+            if !daemon_is_active(config)? {
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -467,8 +743,8 @@ pub async fn stop_daemon(config: &Config) -> DomainResult<()> {
                     nix::unistd::Pid::from_raw(pid),
                     nix::sys::signal::Signal::SIGTERM,
                 );
-                for _ in 0..50 {
-                    if nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_err() {
+                for _ in 0..150 {
+                    if !daemon_is_active(config)? {
                         cleanup_daemon_files(config);
                         return Ok(());
                     }
@@ -650,7 +926,8 @@ mod tests {
         let error = stop_daemon(&config).await.unwrap_err();
 
         assert_eq!(error.code(), ErrorCode::DaemonNotRunning);
-        assert!(!config.daemon_lock_path().exists());
+        assert!(config.daemon_lock_path().exists());
+        assert!(!daemon_is_active(&config).unwrap());
         assert!(!config.socket_path().exists());
     }
 }

@@ -247,6 +247,10 @@ pub struct ReplyTab {
 pub struct ReplyDraft {
     pub method: Option<String>,
     pub url: Option<String>,
+    /// Omission preserves legacy credentials. Named and anonymous selections
+    /// isolate the request from inherited and rule-supplied credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ReplyIdentity>,
     /// Header overrides: name -> value bytes (base64 in JSON APIs as needed).
     pub header_overrides: Vec<HeaderPatch>,
     /// Header names tombstoned (removed from base).
@@ -270,6 +274,14 @@ pub struct ReplyDraft {
     /// not part of the public Reply draft JSON contract.
     #[serde(skip)]
     pub credential_mode: ReplyCredentialMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ReplyIdentity {
+    Default {},
+    Named { profile: String },
+    Anonymous {},
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -455,6 +467,14 @@ pub struct BrowserSession {
     pub id: BrowserSessionId,
     pub project_id: ProjectId,
     pub engine: BrowserEngine,
+    /// Named persistent browser identity. Ephemeral internal sessions have no profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub requested_profile: Option<String>,
+    /// Set only after the live worker confirms this identity and its directory.
+    #[serde(default)]
+    pub active_profile: Option<String>,
     pub current_url: Option<String>,
     /// Last title reported by the active page, retained for client reattachment.
     pub current_title: Option<String>,
