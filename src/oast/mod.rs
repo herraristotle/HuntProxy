@@ -6,14 +6,19 @@
 mod helpers;
 pub mod providers;
 
+use crate::app::AppState;
 use crate::config::{OastConfig, OastProviderKind};
-use crate::domain::{DomainError, DomainResult, ErrorCode};
+use crate::domain::{
+    DomainError, DomainResult, ErrorCode, FuzzJobId, ProjectId,
+};
+use crate::fuzzer::FuzzTemplate;
 use crate::storage::{
     now_rfc3339, NewOastInteraction, NewOastSession, OastProviderRow, OastSessionRow, Db,
 };
 pub use providers::{Interaction, OastProvider, ProviderRegistration, RegisterOptions};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use time::format_description::well_known::Rfc3339;
@@ -83,6 +88,7 @@ pub struct OastProviderView {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OastProviderCreate {
     pub name: String,
     pub kind: String,
@@ -96,6 +102,7 @@ pub struct OastProviderCreate {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OastProviderPatch {
     #[serde(default)]
     pub name: Option<String>,
@@ -119,6 +126,48 @@ struct ResolvedProvider {
     server: String,
     domain: Option<String>,
     token: Option<String>,
+}
+
+/// OAST context of a fuzz job: session plus the per-case label map used for
+/// exact interaction correlation. Shared by the MCP `fuzz_manage` tool and the
+/// REST fuzz endpoints so both surfaces mirror the same annotation rules.
+pub(crate) struct OastJobContext {
+    session_id: i64,
+    payload_url: Option<String>,
+    per_case_labels: bool,
+    labels: BTreeMap<u64, String>,
+}
+
+pub(crate) async fn load_oast_job_context(
+    state: &AppState,
+    project_id: ProjectId,
+    job_id: FuzzJobId,
+) -> DomainResult<Option<OastJobContext>> {
+    let raw = state
+        .db
+        .load_fuzz_template_for_project(project_id, job_id)
+        .await?;
+    let template: FuzzTemplate = serde_json::from_str(&raw)
+        .map_err(|error| DomainError::invalid(format!("stored fuzz template: {error}")))?;
+    let Some(session_id) = template.oast_session_id else {
+        return Ok(None);
+    };
+    let labels = match state.oast.label_case_map(project_id.get(), session_id).await {
+        Ok(entries) => entries
+            .into_iter()
+            .filter_map(|(label, case_index)| Some((case_index? as u64, label)))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(%error, session_id, "oast label map unavailable");
+            BTreeMap::new()
+        }
+    };
+    Ok(Some(OastJobContext {
+        session_id,
+        payload_url: template.oast_payload_url,
+        per_case_labels: template.oast_per_case_labels,
+        labels,
+    }))
 }
 
 pub struct OastService {

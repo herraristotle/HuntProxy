@@ -6,6 +6,7 @@ use crate::codec::{apply_pipeline, Transform};
 use crate::config::Config;
 use crate::domain::*;
 use crate::fuzzer::FuzzTemplate;
+use crate::oast::{load_oast_job_context, OastJobContext};
 use crate::history::{parse_text_query, query_error, HISTORY_QUERY_SYNTAX};
 use crate::policy::{is_sensitive_header, PresentationOptions};
 use crate::storage::CreateCaptureSession;
@@ -1077,47 +1078,6 @@ fn page_analysis_tree_fields(
         "js_bundle_failures": tree.js_bundle_failures,
         "analysis_incomplete": analysis_incomplete,
     })
-}
-
-/// OAST context for a fuzz job: the job's session plus its label → case map.
-/// Present only when the job was started with an `oast` payload generator.
-struct OastJobContext {
-    session_id: i64,
-    payload_url: Option<String>,
-    per_case_labels: bool,
-    labels: BTreeMap<u64, String>,
-}
-
-async fn load_oast_job_context(
-    state: &AppState,
-    project_id: ProjectId,
-    job_id: FuzzJobId,
-) -> DomainResult<Option<OastJobContext>> {
-    let raw = state
-        .db
-        .load_fuzz_template_for_project(project_id, job_id)
-        .await?;
-    let template: FuzzTemplate = serde_json::from_str(&raw)
-        .map_err(|error| DomainError::invalid(format!("stored fuzz template: {error}")))?;
-    let Some(session_id) = template.oast_session_id else {
-        return Ok(None);
-    };
-    let labels = match state.oast.label_case_map(project_id.get(), session_id).await {
-        Ok(entries) => entries
-            .into_iter()
-            .filter_map(|(label, case_index)| Some((case_index? as u64, label)))
-            .collect(),
-        Err(error) => {
-            tracing::warn!(%error, session_id, "oast label map unavailable");
-            BTreeMap::new()
-        }
-    };
-    Ok(Some(OastJobContext {
-        session_id,
-        payload_url: template.oast_payload_url,
-        per_case_labels: template.oast_per_case_labels,
-        labels,
-    }))
 }
 
 #[derive(Debug, Clone, Serialize)]
