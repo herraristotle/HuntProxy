@@ -2,7 +2,7 @@
 //! depth, rate, and robots checks; link discovery from HTML responses;
 //! request persistence through `ReplyService`.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

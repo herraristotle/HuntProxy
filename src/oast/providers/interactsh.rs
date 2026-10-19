@@ -141,10 +141,40 @@ impl InteractshProvider {
         }
         if parsed.message != "registration successful" {
             return Err(protocol_error(format!(
-                "register rejected: {parsed.message}"
+                "register rejected: {}", parsed.message
             )));
         }
         Ok(())
+    }
+
+    fn raw_to_interaction(raw: &[u8], session: &OastSessionRow) -> DomainResult<Interaction> {
+        let to: RawInteraction = serde_json::from_slice(raw)
+            .map_err(|e| protocol_error(format!("interaction json: {e}")))?;
+        Ok(Interaction {
+            protocol: to.protocol,
+            unique_id: to.unique_id,
+            // Server decrypts to `{full-id}` = the full label + payload domain.
+            // The correlation key we persist (what `oast_labels` and the fuzz
+            // `case_index` map key on) is the label itself — trim the domain
+            // suffix so one interaction maps to exactly one label.
+            full_id: Self::normalize_full_id(&to.full_id, session.domain.as_deref()),
+            remote_address: to.remote_address,
+            raw_request: to.raw_request,
+            raw_response: to.raw_response,
+            timestamp: to.timestamp,
+        })
+    }
+
+    fn normalize_full_id(full_id: &str, domain: Option<&str>) -> String {
+        if let Some(domain) = domain {
+            let suffix = format!(".{}", domain.trim_end_matches('.'));
+            if let Some(label) = full_id.strip_suffix(&suffix) {
+                return label.to_string();
+            }
+        }
+        // Labels never contain `.` (xid + zbase32 alphabet), so stripping
+        // everything after the first dot is safe even without a domain.
+        full_id.split('.').next().unwrap_or(full_id).to_string()
     }
 }
 
@@ -294,36 +324,6 @@ impl OastProvider for InteractshProvider {
             interactions.push(Self::raw_to_interaction(plain_json.as_bytes(), session)?);
         }
         Ok(interactions)
-    }
-
-    fn raw_to_interaction(raw: &[u8], session: &OastSessionRow) -> DomainResult<Interaction> {
-        let to: RawInteraction = serde_json::from_slice(raw)
-            .map_err(|e| protocol_error(format!("interaction json: {e}")))?;
-        Ok(Interaction {
-            protocol: to.protocol,
-            unique_id: to.unique_id,
-            // Server decrypts to `{full-id}` = the full label + payload domain.
-            // The correlation key we persist (what `oast_labels` and the fuzz
-            // `case_index` map key on) is the label itself — trim the domain
-            // suffix so one interaction maps to exactly one label.
-            full_id: Self::normalize_full_id(&to.full_id, session.domain.as_deref()),
-            remote_address: to.remote_address,
-            raw_request: to.raw_request,
-            raw_response: to.raw_response,
-            timestamp: to.timestamp,
-        })
-    }
-
-    fn normalize_full_id(full_id: &str, domain: Option<&str>) -> String {
-        if let Some(domain) = domain {
-            let suffix = format!(".{}", domain.trim_end_matches('.'));
-            if let Some(label) = full_id.strip_suffix(&suffix) {
-                return label.to_string();
-            }
-        }
-        // Labels never contain `.` (xid + zbase32 alphabet), so stripping
-        // everything after the first dot is safe even without a domain.
-        full_id.split('.').next().unwrap_or(full_id).to_string()
     }
 
     async fn deregister(&self, session: &OastSessionRow) -> DomainResult<()> {

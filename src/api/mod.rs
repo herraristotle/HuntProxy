@@ -397,6 +397,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/doctor", get(doctor))
         .route("/api/v1/extensions", get(list_extensions))
         .route("/api/v1/extensions/{plugin_id}", get(describe_extension))
+        .route("/api/v1/extensions/{plugin_id}/install", post(install_extension))
+        .route("/api/v1/extensions/{plugin_id}/uninstall", post(uninstall_extension))
+        .route("/api/v1/extensions/{plugin_id}/toggle", post(toggle_extension))
         .route(
             "/api/v1/oast-providers",
             get(list_oast_providers).post(create_oast_provider),
@@ -749,6 +752,42 @@ async fn resume_extension_analysis(
         .await
     {
         Ok(job) => Json(job).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn install_extension(
+    State(state): State<Arc<AppState>>,
+    Path(plugin_id): Path<String>,
+) -> Response {
+    match state.plugins.install(&plugin_id) {
+        Ok(plugin) => Json(plugin).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn uninstall_extension(
+    State(state): State<Arc<AppState>>,
+    Path(plugin_id): Path<String>,
+) -> Response {
+    match state.plugins.uninstall(&plugin_id) {
+        Ok(()) => (StatusCode::NO_CONTENT).into_response(),
+        Err(error) => error_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct ToggleExtensionBody {
+    enabled: bool,
+}
+
+async fn toggle_extension(
+    State(state): State<Arc<AppState>>,
+    Path(plugin_id): Path<String>,
+    Json(body): Json<ToggleExtensionBody>,
+) -> Response {
+    match state.plugins.toggle(&plugin_id, body.enabled) {
+        Ok(plugin) => Json(plugin).into_response(),
         Err(error) => error_response(error),
     }
 }

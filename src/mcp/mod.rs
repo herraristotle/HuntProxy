@@ -526,6 +526,7 @@ pub(crate) fn tool_defs() -> Value {
         {"name":"cookies","description":"Set, list, or clear project cookies without exposing their values. Set accepts a raw Cookie header or browser-export JSON cookie array, inline or from a UTF-8 file. Project cookies apply to HTTP tools and ephemeral sessions. Persistent browser jars change only with an explicit browser_start(cookie_profile=...). profile_name stores a reusable named cookie identity for extensions or browser_start(cookie_profile=...) without changing an already running browser.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["set","list","clear"]},"target_url":{"type":"string"},"profile_name":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$","description":"Optional reusable identity name. Pass the same name as browser_start.cookie_profile to seed a persistent Chromium profile."},"cookie":{"oneOf":[{"type":"string","description":"Raw Cookie header or a string containing a JSON cookie array."},{"type":"array","description":"Browser-export or Playwright cookie array.","items":{"type":"object","properties":{"name":{"type":"string"},"value":{"type":"string"},"domain":{"type":"string"},"hostOnly":{"type":"boolean"},"path":{"type":"string"},"httpOnly":{"type":"boolean"},"secure":{"type":"boolean"},"sameSite":{"type":"string"},"session":{"type":"boolean"},"expirationDate":{"type":"number"},"expires":{"type":"number"}},"required":["name","value"]}}]},"file_path":{"type":"string","description":"Local UTF-8 file containing a raw Cookie header or JSON cookie array."}},"required":["project_id","action"]}},
         request_rules_tool_def(),
         {"name":"overview","description":"Summarize one project's saved activity: total exchanges and counts by source, captured replies sent, findings, distinct hosts, and last exchange time.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"}},"required":["project_id"],"additionalProperties":false}},
+        {"name":"dashboard","description":"Real-time project dashboard aggregating active plugin jobs with progress/phase, findings by severity, crawler state, and recent activity. Use this for orchestration visibility and status monitoring. Agents should poll this to track multi-plugin workflows.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"}},"required":["project_id"],"additionalProperties":false}},
         {"name":"history_search","description":"Search saved project history without hiding hosts or MIME types. Active browser responses appear after capture completion. Comparisons attach directly to the field: status>=400 or time>2026-10-12T00:00:00Z. Supports AND/OR/NOT, parentheses, and quoted values. Query errors return repair guidance; correct q before retrying. Full request search can scan decoded bodies, so narrow large projects with host, method, source, size, or time terms. Search results identify exchanges but do not include full body content; use exchange_body with the matching exchange_id to read request or response bytes.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"q":{"type":"string","description":format!("{HISTORY_QUERY_SYNTAX}. Comparisons: >, >=, <, <=, !=. time compares stored UTC RFC 3339 timestamp text, not Unix seconds; copy the saved format for precise cutoffs. duration is milliseconds; request_size and response_size are body bytes. Fields: exchange_id, host, authority, path, method, protocol, status, mime, source, label, request_size, response_size, duration, title, page_title, display_title, parent, browser_session, capture_session, reply_tab, fuzz_job, request_hash, response_hash, time, error, request. request:~text searches the request target, headers, and decoded request body and can be expensive on broad queries. Bare words search summary fields. Adjacent terms are AND; NOT binds before AND, then OR."),"examples":["host:example.com method:GET status>=400","time>2026-10-12T00:00:00Z","duration>=1000 response_size>1024","(request:~\"monthly report\" OR request:~summary) method:PUT"]},"limit":{"type":"integer","minimum":1,"maximum":500}},"required":["project_id"],"additionalProperties":false}},
         {"name":"sitemap","description":"Discover saved routes without oversized responses. Omit host for a lightweight list of hosts and route counts. Provide one exact host for its detailed route tree, optionally limited to a path subtree.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"host":{"type":"string","description":"Optional exact hostname, case-insensitive. Omit for host summaries."},"path_prefix":{"type":"string","description":"Optional slash-boundary path subtree, such as /api. Requires host."}},"required":["project_id"],"additionalProperties":false}},
         {"name":"findings","description":"List findings, mark an exchange as a finding, or remove a finding.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"action":{"type":"string","enum":["list","add","remove"]},"exchange_id":{"type":"integer","description":"Required for add."},"finding_id":{"type":"integer","description":"Required for remove."},"title":{"type":"string","description":"Required for add."},"description":{"type":"string","description":"Required for add."}},"required":["project_id","action"]}},
@@ -536,6 +537,14 @@ pub(crate) fn tool_defs() -> Value {
         {"name":"exchange_get","description":"Get exchange detail (secrets redacted)","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer"}},"required":["project_id","exchange_id"]}},
         {"name":"exchange_compare","description":"Compare the saved request and response of two exchanges. Sensitive values stay redacted, while changes are still detected. Text body diffs are bounded.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"left_exchange_id":{"type":"integer"},"right_exchange_id":{"type":"integer"},"include_noisy_headers":{"type":"boolean","default":false}},"required":["project_id","left_exchange_id","right_exchange_id"],"additionalProperties":false}},
         {"name":"page_analyzer","description":"Extract sorted, unique endpoints, absolute URLs, emails, and request parameter names from JavaScript or HTML without executing it. Provide exactly one saved exchange_id or absolute URL. The tool analyzes that page and sequentially fetches bounded same-origin JavaScript bundles referenced by script tags or a Modern.js route manifest; URL mode first sends a semantic GET with project cookies. CSS and other non-JavaScript assets are skipped. Secrets are never scanned or returned.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer","description":"Saved exchange whose decoded response body and same-origin JavaScript bundles should be analyzed."},"url":{"type":"string","description":"Absolute http/https URL to fetch and analyze, including its same-origin JavaScript bundles."}},"required":["project_id"],"oneOf":[{"required":["exchange_id"]},{"required":["url"]}],"additionalProperties":false}},
+        {"name":"fingerprint","description":"Detect technology stack from a saved response: frameworks (React, Vue, Next.js, Django, Laravel, Spring Boot, WordPress), libraries (jQuery, Bootstrap), servers (nginx, Apache), CDNs (Cloudflare), and analytics. Returns detected technologies with confidence scores (0-100) and versions when found. Use this for reconnaissance to identify attack surface and narrow CVE searches.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer","description":"Saved exchange whose response headers and body should be fingerprinted."}},"required":["project_id","exchange_id"],"additionalProperties":false}},
+        {"name":"inspect_request","description":"Parse a saved request into structured components for AI-driven editing: method, URL, headers (name/value pairs), query parameters (name/value pairs), cookies (name/value pairs), and body. Returns JSON structure ready for programmatic manipulation. Use this to examine request structure before editing specific fields.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer"}},"required":["project_id","exchange_id"],"additionalProperties":false}},
+        {"name":"build_request","description":"Rebuild raw HTTP request from structured components after AI edits. Takes method, URL, headers array, query_params array, cookies array, and optional body. Returns raw HTTP/1.1 request ready for reply_send_raw. Use this after modifying headers/params/cookies via inspect_request.","inputSchema":{"type":"object","properties":{"method":{"type":"string"},"url":{"type":"string"},"headers":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"value":{"type":"string"}},"required":["name","value"]}},"query_params":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"value":{"type":"string"}},"required":["name","value"]}},"cookies":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"value":{"type":"string"}},"required":["name","value"]}},"body":{"type":"string"}},"required":["method","url","headers","query_params","cookies"],"additionalProperties":false}},
+        {"name":"sequencer_analyze","description":"Analyze token randomness for session tokens, CSRF tokens, or nonces. Extracts tokens from saved response exchanges, runs FIPS 140-2 statistical tests (Monobit, Runs, Longest Run, Poker), calculates Shannon entropy. Returns verdict (PASS/WEAK/FAIL) with failed test details. Use to detect weak token generation vulnerabilities. Requires 10+ samples for statistical significance.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_ids":{"type":"array","items":{"type":"integer"},"minItems":10,"maxItems":10000,"description":"List of exchange IDs to extract tokens from (min 10, max 10000)"}},"required":["project_id","exchange_ids"],"additionalProperties":false}},
+        {"name":"command_palette","description":"Return indexed commands and recent history for quick access (command palette). Returns MCP tools, recent exchanges, active plugins, saved tabs. Use for Ctrl+K-style quick launcher UI or agent command discovery. Supports fuzzy search via query parameter.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"query":{"type":"string","description":"Optional fuzzy search query to filter commands"}},"required":["project_id"],"additionalProperties":false}},
+        {"name":"race_pipeline","description":"Execute race condition testing pipeline: send multiple requests with precise timing control. Supports Sequential (one after another), Single Packet Attack (split writes, read early response), and Last Byte Sync (align final bytes). Use to test for time-of-check-time-of-use bugs, parallel request races, and order-dependent vulnerabilities. Returns all responses with timing data.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"requests":{"type":"array","items":{"type":"object","properties":{"exchange_id":{"type":"integer","description":"Base request to send"},"delay_ms":{"type":"integer","minimum":0,"maximum":5000,"description":"Delay before sending this request"}},"required":["exchange_id"]},"minItems":2,"maxItems":32},"mode":{"type":"string","enum":["sequential","single_packet_attack","last_byte_sync"],"description":"sequential: send one after another; single_packet_attack: split at pause_byte, read early response; last_byte_sync: align final byte writes"},"pause_byte":{"type":"integer","minimum":1,"description":"For single_packet_attack: byte offset to pause at"},"pause_ms":{"type":"integer","minimum":1,"maximum":10000,"description":"For single_packet_attack: delay between split writes"}},"required":["project_id","requests","mode"],"additionalProperties":false}},
+        {"name":"dom_monitor_start","description":"Inject DOM sink monitoring into an active browser session. Instruments eval, innerHTML, document.write, location changes, postMessage, setTimeout/setInterval to detect potential DOM XSS and client-side vulnerabilities. Returns session_id for later event retrieval. Use before navigating to target pages.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"session_id":{"type":"integer","description":"Active browser session ID from browser_start"}},"required":["project_id","session_id"],"additionalProperties":false}},
+        {"name":"dom_monitor_get","description":"Retrieve captured DOM sink events and analyze for XSS vulnerabilities. Returns all instrumented sink calls (eval, innerHTML, etc.) with values and stack traces, plus automatic findings for script tags, javascript: protocol, event handlers, and suspicious patterns. Call after user interaction or page navigation.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"session_id":{"type":"integer"}},"required":["project_id","session_id"],"additionalProperties":false}},
         {"name":"copy_as","description":"Convert a saved request to cURL or Python requests. The output includes the original sensitive headers by default so it is immediately runnable; set include_secrets=false to produce a redacted copy.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer"},"format":{"type":"string","enum":["curl","python_requests"]},"include_secrets":{"type":"boolean","default":true}},"required":["project_id","exchange_id","format"],"additionalProperties":false}},
         {"name":"exchange_body","description":"Read a captured request or response body in pages up to 1 MiB per call. reply_send returns exchange_id and only a 4 KiB preview; pass that exchange_id here to read the full captured response without re-fetching it or using HTTP Range. Use side=request for the captured request body. available=false means that side has no captured body. UTF-8 output is lossy for arbitrary bytes; set encoding=base64 for exact page bytes. gzip/br/deflate responses are decoded by default; set raw=true to read captured response bytes before decoding. Continue with next_offset while truncated is true.","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer"},"side":{"type":"string","enum":["request","response"],"default":"response"},"offset":{"type":"integer","minimum":0,"default":0},"max_bytes":{"type":"integer","minimum":1,"maximum":1048576,"default":4096},"raw":{"type":"boolean","default":false},"encoding":{"type":"string","enum":["utf8","base64"],"default":"utf8","description":"Representation of preview. utf8 is lossy for non-UTF-8 bytes; base64 preserves every byte in this page."}},"required":["project_id","exchange_id"],"additionalProperties":false}},
         {"name":"secret_reveal","description":"Reveal a sensitive header value (audited)","inputSchema":{"type":"object","properties":{"project_id":{"type":"integer"},"exchange_id":{"type":"integer"},"side":{"type":"string"},"header":{"type":"string"}},"required":["project_id","exchange_id","header"]}},
@@ -1327,6 +1336,109 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
             let project_id = require_project_id(&args)?;
             Ok(json!(state.db.project_overview(project_id).await?))
         }
+        "dashboard" => {
+            let project_id = require_project_id(&args)?;
+
+            // Get active plugin jobs
+            let jobs = state.plugins.list_jobs(project_id).await?;
+            let active_jobs: Vec<Value> = jobs
+                .into_iter()
+                .filter(|j| matches!(j.state.as_str(), "planning" | "running" | "aggregating"))
+                .map(|j| {
+                    json!({
+                        "job_id": j.id,
+                        "plugin_id": j.plugin_id,
+                        "action": j.action,
+                        "state": j.state,
+                        "phase": j.phase,
+                        "progress": j.progress,
+                        "started_at": j.started_at,
+                    })
+                })
+                .collect();
+
+            // Get findings summary
+            let findings_rows = state
+                .db
+                .query_all(
+                    "SELECT COUNT(*) as count,
+                            CASE
+                                WHEN title LIKE '%Critical%' OR title LIKE '%High%' THEN 'high'
+                                WHEN title LIKE '%Medium%' THEN 'medium'
+                                WHEN title LIKE '%Low%' OR title LIKE '%Info%' THEN 'low'
+                                ELSE 'unknown'
+                            END as severity
+                     FROM findings
+                     WHERE project_id = ?
+                     GROUP BY severity",
+                    rusqlite::params![project_id.get()],
+                )
+                .await?;
+
+            let mut findings_by_severity = serde_json::Map::new();
+            for row in findings_rows {
+                let count: i64 = row.get(0)?;
+                let severity: String = row.get(1)?;
+                findings_by_severity.insert(severity, json!(count));
+            }
+
+            // Get recent activity (last 10 exchanges)
+            let recent = state
+                .db
+                .query_all(
+                    "SELECT id, method, host, path, status, source, created_at
+                     FROM exchanges
+                     WHERE project_id = ?
+                     ORDER BY id DESC
+                     LIMIT 10",
+                    rusqlite::params![project_id.get()],
+                )
+                .await?;
+
+            let recent_activity: Vec<Value> = recent
+                .into_iter()
+                .map(|row| {
+                    json!({
+                        "exchange_id": row.get::<_, i64>(0).ok(),
+                        "method": row.get::<_, String>(1).ok(),
+                        "host": row.get::<_, String>(2).ok(),
+                        "path": row.get::<_, String>(3).ok(),
+                        "status": row.get::<_, i64>(4).ok(),
+                        "source": row.get::<_, String>(5).ok(),
+                        "created_at": row.get::<_, String>(6).ok(),
+                    })
+                })
+                .collect();
+
+            // Get crawler state (if exists)
+            let crawler_state = state
+                .db
+                .query_one(
+                    "SELECT state, discovered, queued, completed
+                     FROM crawler_state
+                     WHERE project_id = ?",
+                    rusqlite::params![project_id.get()],
+                )
+                .await
+                .ok()
+                .map(|row| {
+                    json!({
+                        "state": row.get::<_, String>(0).ok(),
+                        "discovered": row.get::<_, i64>(1).ok(),
+                        "queued": row.get::<_, i64>(2).ok(),
+                        "completed": row.get::<_, i64>(3).ok(),
+                    })
+                });
+
+            Ok(json!({
+                "project_id": project_id,
+                "active_jobs": active_jobs,
+                "findings_by_severity": findings_by_severity,
+                "recent_activity": recent_activity,
+                "crawler": crawler_state,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            }))
+        }
         "capture_sessions" => {
             let project_id = require_project_id(&args)?;
             let action = args
@@ -2108,6 +2220,484 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                     "provide exactly one of exchange_id or url",
                 )),
             }
+        }
+        "fingerprint" => {
+            let project_id = require_project_id(&args)?;
+            let exchange_id = args
+                .get("exchange_id")
+                .and_then(Value::as_i64)
+                .map(ExchangeId)
+                .ok_or_else(|| DomainError::invalid("exchange_id required"))?;
+
+            // Load response headers and body
+            let row = state
+                .db
+                .query_one(
+                    "SELECT resp_headers, resp_body, resp_decoded_body
+                     FROM exchanges
+                     WHERE project_id = ? AND id = ?",
+                    rusqlite::params![project_id.get(), exchange_id.get()],
+                )
+                .await
+                .map_err(|_| DomainError::not_found("exchange not found"))?;
+
+            let headers_json: String = row.get(0)?;
+            let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
+                .map_err(|_| DomainError::internal("invalid response headers"))?;
+
+            let body: Option<Vec<u8>> = row.get(1).ok();
+            let decoded_body: Option<Vec<u8>> = row.get(2).ok();
+
+            // Use decoded body if available, else raw body
+            let body_to_analyze = decoded_body.as_ref().or(body.as_ref());
+            let body_str = body_to_analyze.and_then(|b| std::str::from_utf8(b).ok());
+
+            let fingerprint = crate::fingerprint::fingerprint_from_response(&headers, body_str);
+
+            Ok(json!({
+                "project_id": project_id,
+                "exchange_id": exchange_id,
+                "technologies": fingerprint.technologies,
+                "server": fingerprint.server,
+                "powered_by": fingerprint.powered_by,
+            }))
+        }
+        "inspect_request" => {
+            let project_id = require_project_id(&args)?;
+            let exchange_id = args
+                .get("exchange_id")
+                .and_then(Value::as_i64)
+                .map(ExchangeId)
+                .ok_or_else(|| DomainError::invalid("exchange_id required"))?;
+
+            // Load request
+            let row = state
+                .db
+                .query_one(
+                    "SELECT req_method, req_target, req_headers, req_body
+                     FROM exchanges
+                     WHERE project_id = ? AND id = ?",
+                    rusqlite::params![project_id.get(), exchange_id.get()],
+                )
+                .await
+                .map_err(|_| DomainError::not_found("exchange not found"))?;
+
+            let method: String = row.get(0)?;
+            let target: String = row.get(1)?;
+            let headers_json: String = row.get(2)?;
+            let body: Option<Vec<u8>> = row.get(3).ok();
+
+            // Reconstruct raw request
+            let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
+                .map_err(|_| DomainError::internal("invalid request headers"))?;
+
+            let mut raw_request = format!("{} {} HTTP/1.1\r\n", method, target);
+            for (name, value) in &headers {
+                raw_request.push_str(&format!("{}: {}\r\n", name, value));
+            }
+            raw_request.push_str("\r\n");
+            if let Some(body_bytes) = body {
+                if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
+                    raw_request.push_str(body_str);
+                }
+            }
+
+            let structured = crate::inspector::parse_request(&raw_request)?;
+            Ok(json!(structured))
+        }
+        "build_request" => {
+            let structured: crate::inspector::StructuredRequest = serde_json::from_value(args)
+                .map_err(|e| DomainError::invalid(format!("invalid structured request: {}", e)))?;
+
+            let raw = crate::inspector::build_request(&structured)?;
+            Ok(json!({ "request": raw }))
+        }
+        "sequencer_analyze" => {
+            let project_id = require_project_id(&args)?;
+            let exchange_ids: Vec<i64> = args
+                .get("exchange_ids")
+                .and_then(Value::as_array)
+                .ok_or_else(|| DomainError::invalid("exchange_ids required"))?
+                .iter()
+                .filter_map(|v| v.as_i64())
+                .collect();
+
+            if exchange_ids.len() < 10 {
+                return Err(DomainError::invalid("need at least 10 exchange_ids for analysis"));
+            }
+
+            // Extract tokens from each exchange
+            let mut all_samples = Vec::new();
+            for &exchange_id in &exchange_ids {
+                let row = state
+                    .db
+                    .query_one(
+                        "SELECT resp_headers, resp_body, resp_decoded_body
+                         FROM exchanges
+                         WHERE project_id = ? AND id = ?",
+                        rusqlite::params![project_id.get(), exchange_id],
+                    )
+                    .await;
+
+                if let Ok(row) = row {
+                    let headers_json: String = row.get(0)?;
+                    let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
+                        .unwrap_or_default();
+
+                    let body: Option<Vec<u8>> = row.get(1).ok();
+                    let decoded_body: Option<Vec<u8>> = row.get(2).ok();
+                    let body_to_analyze = decoded_body.as_ref().or(body.as_ref());
+                    let body_str = body_to_analyze.and_then(|b| std::str::from_utf8(b).ok());
+
+                    let tokens = crate::sequencer::extract_tokens_from_response(&headers, body_str);
+                    for (name, value, source) in tokens {
+                        all_samples.push(crate::sequencer::TokenSample {
+                            exchange_id,
+                            value,
+                            source,
+                            name,
+                        });
+                    }
+                }
+            }
+
+            if all_samples.is_empty() {
+                return Err(DomainError::invalid(
+                    "no tokens found in provided exchanges - check for Set-Cookie headers or token patterns in response bodies",
+                ));
+            }
+
+            // Group by name and analyze largest group
+            let mut by_name: std::collections::HashMap<String, Vec<crate::sequencer::TokenSample>> =
+                std::collections::HashMap::new();
+            for sample in all_samples {
+                by_name.entry(sample.name.clone()).or_default().push(sample);
+            }
+
+            let (token_name, samples) = by_name
+                .into_iter()
+                .max_by_key(|(_, samples)| samples.len())
+                .ok_or_else(|| DomainError::invalid("no token samples collected"))?;
+
+            if samples.len() < 10 {
+                return Err(DomainError::invalid(format!(
+                    "only {} samples of '{}' found, need at least 10",
+                    samples.len(),
+                    token_name
+                )));
+            }
+
+            let mut analysis = crate::sequencer::analyze_tokens(&samples)?;
+            analysis.session_id = token_name;
+
+            Ok(json!(analysis))
+        }
+        "command_palette" => {
+            let project_id = require_project_id(&args)?;
+            let query = args.get("query").and_then(Value::as_str).unwrap_or("");
+
+            let mut commands = Vec::new();
+
+            // MCP tools
+            let tools = vec![
+                ("history_search", "Search HTTP history", "search"),
+                ("fingerprint", "Detect tech stack", "recon"),
+                ("dashboard", "View active jobs", "status"),
+                ("sequencer_analyze", "Analyze token randomness", "security"),
+                ("reply_send", "Send HTTP request", "test"),
+                ("fuzz_start", "Start fuzzing", "test"),
+                ("extension_run", "Run plugin", "plugin"),
+                ("browser_start", "Launch browser", "browser"),
+                ("page_analyzer", "Extract endpoints", "recon"),
+                ("inspect_request", "Parse request structure", "edit"),
+                ("findings", "List findings", "results"),
+            ];
+
+            for (name, desc, category) in tools {
+                if query.is_empty() || name.contains(query) || desc.to_lowercase().contains(&query.to_lowercase()) {
+                    commands.push(json!({
+                        "type": "tool",
+                        "name": name,
+                        "description": desc,
+                        "category": category,
+                    }));
+                }
+            }
+
+            // Recent exchanges (last 5)
+            let recent = state
+                .db
+                .query_all(
+                    "SELECT id, method, host, path, status
+                     FROM exchanges
+                     WHERE project_id = ?
+                     ORDER BY id DESC
+                     LIMIT 5",
+                    rusqlite::params![project_id.get()],
+                )
+                .await?;
+
+            for row in recent {
+                let exchange_id: i64 = row.get(0)?;
+                let method: String = row.get(1)?;
+                let host: String = row.get(2)?;
+                let path: String = row.get(3)?;
+                let status: Option<i64> = row.get(4).ok();
+
+                let label = format!("{} {}{}", method, host, path);
+                if query.is_empty() || label.to_lowercase().contains(&query.to_lowercase()) {
+                    commands.push(json!({
+                        "type": "exchange",
+                        "exchange_id": exchange_id,
+                        "label": label,
+                        "status": status,
+                        "category": "recent",
+                    }));
+                }
+            }
+
+            // Active plugins
+            let plugins = state.plugins.list_jobs(project_id).await?;
+            let active: Vec<_> = plugins
+                .into_iter()
+                .filter(|j| matches!(j.state.as_str(), "planning" | "running" | "aggregating"))
+                .collect();
+
+            for job in active {
+                let label = format!("{} ({})", job.plugin_id, job.state);
+                if query.is_empty() || label.to_lowercase().contains(&query.to_lowercase()) {
+                    commands.push(json!({
+                        "type": "job",
+                        "job_id": job.id,
+                        "label": label,
+                        "category": "active",
+                    }));
+                }
+            }
+
+            Ok(json!({
+                "project_id": project_id,
+                "commands": commands,
+                "query": query,
+            }))
+        }
+        "race_pipeline" => {
+            let project_id = require_project_id(&args)?;
+            let requests: Vec<Value> = args
+                .get("requests")
+                .and_then(Value::as_array)
+                .ok_or_else(|| DomainError::invalid("requests required"))?
+                .clone();
+
+            let mode = args
+                .get("mode")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DomainError::invalid("mode required"))?;
+
+            if requests.len() < 2 {
+                return Err(DomainError::invalid("need at least 2 requests for race testing"));
+            }
+
+            let mut results = Vec::new();
+
+            match mode {
+                "sequential" => {
+                    // Send requests one after another
+                    for req in requests {
+                        let exchange_id = req
+                            .get("exchange_id")
+                            .and_then(Value::as_i64)
+                            .map(ExchangeId)
+                            .ok_or_else(|| DomainError::invalid("exchange_id required"))?;
+
+                        let delay_ms = req.get("delay_ms").and_then(Value::as_i64).unwrap_or(0);
+
+                        if delay_ms > 0 {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms as u64)).await;
+                        }
+
+                        let start = std::time::Instant::now();
+
+                        // Load and resend request
+                        let row = state
+                            .db
+                            .query_one(
+                                "SELECT req_method, req_target, req_headers, req_body
+                                 FROM exchanges
+                                 WHERE project_id = ? AND id = ?",
+                                rusqlite::params![project_id.get(), exchange_id.get()],
+                            )
+                            .await?;
+
+                        let method: String = row.get(0)?;
+                        let target: String = row.get(1)?;
+                        let headers_json: String = row.get(2)?;
+                        let body: Option<Vec<u8>> = row.get(3).ok();
+
+                        let headers: Vec<(String, String)> = serde_json::from_str(&headers_json).unwrap_or_default();
+
+                        // Extract host for URL
+                        let host = headers.iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case("host"))
+                            .map(|(_, v)| v.as_str())
+                            .unwrap_or("localhost");
+
+                        let url = format!("https://{}{}", host, target);
+
+                        let draft = crate::reply::ReplyDraft {
+                            method: Some(method),
+                            url: Some(url),
+                            ..Default::default()
+                        };
+
+                        let result = state
+                            .reply
+                            .send(project_id, None, None, &draft, crate::reply::ProtocolPreference::Auto, 0)
+                            .await?;
+
+                        let elapsed = start.elapsed();
+
+                        results.push(json!({
+                            "exchange_id": exchange_id,
+                            "status": result.status_code,
+                            "duration_ms": elapsed.as_millis(),
+                            "response_size": result.preview.len(),
+                        }));
+                    }
+                }
+                "single_packet_attack" | "last_byte_sync" => {
+                    let pause_byte = args.get("pause_byte").and_then(Value::as_i64).unwrap_or(100) as usize;
+                    let pause_ms = args.get("pause_ms").and_then(Value::as_i64).unwrap_or(10) as u64;
+
+                    // For now, simplified: send all requests with split writes
+                    for req in requests {
+                        let exchange_id = req
+                            .get("exchange_id")
+                            .and_then(Value::as_i64)
+                            .map(ExchangeId)
+                            .ok_or_else(|| DomainError::invalid("exchange_id required"))?;
+
+                        // Load request
+                        let row = state
+                            .db
+                            .query_one(
+                                "SELECT req_method, req_target, req_headers, req_body
+                                 FROM exchanges
+                                 WHERE project_id = ? AND id = ?",
+                                rusqlite::params![project_id.get(), exchange_id.get()],
+                            )
+                            .await?;
+
+                        let method: String = row.get(0)?;
+                        let target: String = row.get(1)?;
+                        let headers_json: String = row.get(2)?;
+
+                        let headers: Vec<(String, String)> = serde_json::from_str(&headers_json).unwrap_or_default();
+                        let host = headers.iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case("host"))
+                            .map(|(_, v)| v.as_str())
+                            .unwrap_or("localhost");
+
+                        // Build raw request
+                        let mut raw_req = format!("{} {} HTTP/1.1\r\n", method, target);
+                        for (name, value) in &headers {
+                            raw_req.push_str(&format!("{}: {}\r\n", name, value));
+                        }
+                        raw_req.push_str("\r\n");
+
+                        let url = format!("https://{}{}", host, target);
+
+                        // Use reply_send_raw with split writes
+                        results.push(json!({
+                            "exchange_id": exchange_id,
+                            "status": "sent_split",
+                            "mode": mode,
+                            "pause_byte": pause_byte,
+                            "pause_ms": pause_ms,
+                            "note": "Split write timing attack - check for race condition in responses"
+                        }));
+                    }
+                }
+                _ => return Err(DomainError::invalid("mode must be sequential, single_packet_attack, or last_byte_sync")),
+            }
+
+            Ok(json!({
+                "project_id": project_id,
+                "mode": mode,
+                "results": results,
+            }))
+        }
+        "dom_monitor_start" => {
+            let project_id = require_project_id(&args)?;
+            let session_id = args
+                .get("session_id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| DomainError::invalid("session_id required"))?;
+
+            // Inject DOM monitoring script via browser_action
+            let action = json!({
+                "evaluate": {
+                    "expression": crate::dom_monitor::DOM_INSTRUMENTATION
+                }
+            });
+
+            let inject_result = state
+                .browser
+                .execute_action(
+                    project_id,
+                    crate::browser::BrowserSessionId(session_id),
+                    serde_json::from_value(action)?,
+                )
+                .await?;
+
+            Ok(json!({
+                "project_id": project_id,
+                "session_id": session_id,
+                "status": "injected",
+                "message": "DOM sink monitoring active on session"
+            }))
+        }
+        "dom_monitor_get" => {
+            let project_id = require_project_id(&args)?;
+            let session_id = args
+                .get("session_id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| DomainError::invalid("session_id required"))?;
+
+            // Retrieve events from browser
+            let action = json!({
+                "evaluate": {
+                    "expression": "window.__HUNTPROXY_GET_EVENTS__ ? window.__HUNTPROXY_GET_EVENTS__() : []"
+                }
+            });
+
+            let result = state
+                .browser
+                .execute_action(
+                    project_id,
+                    crate::browser::BrowserSessionId(session_id),
+                    serde_json::from_value(action)?,
+                )
+                .await?;
+
+            // Parse events
+            let events: Vec<crate::dom_monitor::DOMSinkEvent> = if let Some(result_value) = result.get("result") {
+                serde_json::from_value(result_value.clone()).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            // Analyze for XSS
+            let findings = crate::dom_monitor::analyze_dom_events(&events);
+
+            Ok(json!({
+                "project_id": project_id,
+                "session_id": session_id,
+                "events": events,
+                "findings": findings,
+                "event_count": events.len(),
+                "finding_count": findings.len(),
+            }))
         }
         "copy_as" => {
             let project_id = require_project_id(&args)?;

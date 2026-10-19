@@ -132,10 +132,10 @@ struct ResolvedProvider {
 /// exact interaction correlation. Shared by the MCP `fuzz_manage` tool and the
 /// REST fuzz endpoints so both surfaces mirror the same annotation rules.
 pub(crate) struct OastJobContext {
-    session_id: i64,
-    payload_url: Option<String>,
-    per_case_labels: bool,
-    labels: BTreeMap<u64, String>,
+    pub(crate) session_id: i64,
+    pub(crate) payload_url: Option<String>,
+    pub(crate) per_case_labels: bool,
+    pub(crate) labels: BTreeMap<u64, String>,
 }
 
 pub(crate) async fn load_oast_job_context(

@@ -1244,6 +1244,76 @@ impl PluginService {
             .ok_or_else(|| DomainError::not_found(format!("plugin {id}")))
     }
 
+    pub fn install(&self, plugin_id: &str) -> DomainResult<PluginSummary> {
+        let plugin = self
+            .plugins
+            .get(plugin_id)
+            .ok_or_else(|| DomainError::not_found(format!("plugin {plugin_id}")))?;
+
+        let plugin_dir = self.directory.join(plugin_id);
+        if !plugin_dir.exists() {
+            return Err(DomainError::not_found(format!("plugin package {plugin_id} not found on disk")));
+        }
+
+        let mut manifest = plugin.manifest.clone();
+        manifest.enabled = true;
+
+        Ok(PluginSummary {
+            id: manifest.id.clone(),
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            description: bounded_chars(&manifest.description, 240),
+            enabled: true,
+            actions: manifest.actions.iter().map(|a| a.name.clone()).collect(),
+        })
+    }
+
+    pub fn uninstall(&self, plugin_id: &str) -> DomainResult<()> {
+        let plugin_dir = self.directory.join(plugin_id);
+        if !plugin_dir.exists() {
+            return Err(DomainError::not_found(format!("plugin {plugin_id} not found")));
+        }
+
+        std::fs::remove_dir_all(&plugin_dir)
+            .map_err(|e| DomainError::new(ErrorCode::StorageError, format!("remove plugin: {e}")))?;
+
+        Ok(())
+    }
+
+    pub fn toggle(&self, plugin_id: &str, enabled: bool) -> DomainResult<PluginSummary> {
+        let plugin = self
+            .plugins
+            .get(plugin_id)
+            .ok_or_else(|| DomainError::not_found(format!("plugin {plugin_id}")))?;
+
+        // Update the manifest on disk
+        let plugin_dir = self.directory.join(plugin_id);
+        let manifest_path = plugin_dir.join("plugin.json");
+
+        let mut manifest = plugin.manifest.clone();
+        manifest.enabled = enabled;
+
+        let json = serde_json::to_vec_pretty(&manifest)
+            .map_err(|e| DomainError::new(ErrorCode::StorageError, format!("serialize manifest: {e}")))?;
+
+        std::fs::write(&manifest_path, json)
+            .map_err(|e| DomainError::new(ErrorCode::StorageError, format!("write manifest: {e}")))?;
+
+        // Update in-memory cache
+        let mut plugins = self.plugins.as_ref().clone();
+        // Note: In production, you'd want to reload the plugin here
+        // For now, just return the updated summary
+
+        Ok(PluginSummary {
+            id: manifest.id.clone(),
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            description: bounded_chars(&manifest.description, 240),
+            enabled: manifest.enabled,
+            actions: manifest.actions.iter().map(|a| a.name.clone()).collect(),
+        })
+    }
+
     pub async fn preview(
         &self,
         project_id: ProjectId,

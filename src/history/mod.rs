@@ -424,21 +424,40 @@ fn compile_request_term(
     value: &serde_json::Value,
     binds: &mut Vec<String>,
 ) -> DomainResult<String> {
-    if op != "contains" {
-        return Err(query_error(
-            "request supports only the contains operator; use request:~text",
-        ));
+    let (op, negate) = match op {
+        "neq" => ("contains", true),
+        "nregex" => ("regex", true),
+        other => (other, false),
+    };
+    if op != "contains" && op != "regex" {
+        return Err(query_error(format!(
+            "{field} supports only request:~text and request=~regex"
+        )));
     }
-    let value = value_as_string("request", value)?;
-    binds.push(format!("%{}%", escape_like(&value)));
-    let like_index = binds.len();
-    binds.push(value);
+    let raw = value_as_string(field, value)?;
+    let body_fn = if op == "regex" {
+        validate_regex_pattern(&raw)?;
+        binds.push(raw);
+        "huntproxy_body_regex"
+    } else {
+        binds.push(format!("%{}%", escape_like(&raw)));
+        "huntproxy_body_contains"
+    };
+    let pattern_index = binds.len();
     let body_index = binds.len();
-    // `target_op` carries the comparison plus its operands: LIKE needs the
-    // ESCAPE clause, REGEXP does not.
+    // LIKE needs the ESCAPE clause; REGEXP does not.
+    let target_op = if op == "regex" {
+        "REGEXP"
+    } else {
+        "LIKE ESCAPE"
+    };
     let target = match target_op {
         "LIKE ESCAPE" => format!("LIKE ?{pattern_index} ESCAPE '\\'"),
         _ => format!("REGEXP ?{pattern_index}"),
+    };
+    let (side, body_column) = match field {
+        "response" => ("response", "response_body_id"),
+        _ => ("request", "request_body_id"),
     };
     let mut clauses: Vec<String> = Vec::new();
     if field == "request" {
@@ -459,7 +478,12 @@ fn compile_request_term(
          WHERE b.id=exchanges.{body_column} \
            AND {body_fn}(b.codec, b.content, ?{body_index}))"
     ));
-    Ok(format!("({})", clauses.join(" OR ")))
+    let clause = format!("({})", clauses.join(" OR "));
+    Ok(if negate {
+        format!("NOT {clause}")
+    } else {
+        clause
+    })
 }
 
 /// `header`, `req_header` and `resp_header` scan `message_headers` only -
@@ -634,6 +658,19 @@ fn escape_like(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")
+}
+
+/// Reject regex patterns that cannot compile, or that exceed the length the
+/// SQL body functions accept, before they reach the database.
+fn validate_regex_pattern(pattern: &str) -> DomainResult<()> {
+    if pattern.len() > MAX_REGEX_LEN {
+        return Err(query_error(format!(
+            "regex pattern too long (max {MAX_REGEX_LEN} bytes)"
+        )));
+    }
+    regex::Regex::new(pattern)
+        .map_err(|error| query_error(format!("invalid regex pattern: {error}")))?;
+    Ok(())
 }
 
 fn value_as_string(field: &str, v: &serde_json::Value) -> DomainResult<String> {
