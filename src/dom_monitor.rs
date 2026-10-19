@@ -153,7 +153,8 @@ pub fn analyze_dom_events(events: &[DOMSinkEvent]) -> Vec<DOMFinding> {
         // Check for event handlers
         if value_lower.contains("onerror=")
             || value_lower.contains("onload=")
-            || value_lower.contains("onclick=") {
+            || value_lower.contains("onclick=")
+        {
             findings.push(DOMFinding {
                 severity: "high".to_string(),
                 sink: event.sink_type.clone(),
@@ -167,7 +168,8 @@ pub fn analyze_dom_events(events: &[DOMSinkEvent]) -> Vec<DOMFinding> {
         if event.sink_type == "eval" {
             if value_lower.contains("window.location")
                 || value_lower.contains("document.cookie")
-                || value_lower.contains("localstorage") {
+                || value_lower.contains("localstorage")
+            {
                 findings.push(DOMFinding {
                     severity: "medium".to_string(),
                     sink: "eval".to_string(),
@@ -199,15 +201,13 @@ mod tests {
 
     #[test]
     fn test_xss_detection() {
-        let events = vec![
-            DOMSinkEvent {
-                sink_type: "innerHTML".to_string(),
-                value: "<script>alert(1)</script>".to_string(),
-                stack_trace: None,
-                url: "https://example.com".to_string(),
-                timestamp: "2026-10-18T00:00:00Z".to_string(),
-            },
-        ];
+        let events = vec![DOMSinkEvent {
+            sink_type: "innerHTML".to_string(),
+            value: "<script>alert(1)</script>".to_string(),
+            stack_trace: None,
+            url: "https://example.com".to_string(),
+            timestamp: "2026-10-18T00:00:00Z".to_string(),
+        }];
 
         let findings = analyze_dom_events(&events);
         assert_eq!(findings.len(), 1);
@@ -217,15 +217,13 @@ mod tests {
 
     #[test]
     fn test_javascript_protocol() {
-        let events = vec![
-            DOMSinkEvent {
-                sink_type: "location.href".to_string(),
-                value: "javascript:alert(1)".to_string(),
-                stack_trace: None,
-                url: "https://example.com".to_string(),
-                timestamp: "2026-10-18T00:00:00Z".to_string(),
-            },
-        ];
+        let events = vec![DOMSinkEvent {
+            sink_type: "location.href".to_string(),
+            value: "javascript:alert(1)".to_string(),
+            stack_trace: None,
+            url: "https://example.com".to_string(),
+            timestamp: "2026-10-18T00:00:00Z".to_string(),
+        }];
 
         let findings = analyze_dom_events(&events);
         assert_eq!(findings.len(), 1);
