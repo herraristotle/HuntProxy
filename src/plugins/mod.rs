@@ -8,6 +8,7 @@ use crate::cookies::CookiePair;
 use crate::domain::*;
 use crate::policy::url_is_in_scope;
 use crate::reply::{ReplySendContext, ReplyService};
+use arc_swap::ArcSwap;
 use base64::Engine;
 use dashmap::DashMap;
 use futures::{stream, StreamExt};
@@ -186,6 +187,96 @@ struct LoadedPlugin {
     manifest: PluginManifest,
     script: Arc<str>,
     resources: Arc<HashMap<String, String>>,
+}
+
+fn summarize(plugin: &LoadedPlugin) -> PluginSummary {
+    PluginSummary {
+        id: plugin.manifest.id.clone(),
+        name: plugin.manifest.name.clone(),
+        version: plugin.manifest.version.clone(),
+        description: bounded_chars(&plugin.manifest.description, 240),
+        enabled: plugin.manifest.enabled,
+        actions: plugin
+            .manifest
+            .actions
+            .iter()
+            .map(|action| action.name.clone())
+            .collect(),
+    }
+}
+
+/// User-owned install state, deliberately stored *beside* the package
+/// directories rather than inside them.
+///
+/// `installation::reconcile_plugins` owns every release-catalog package
+/// directory and rewrites it on upgrade, and it decides what to overwrite by
+/// hashing each directory's files. Writing an enabled flag into a package's
+/// `plugin.json` would therefore both change the package's hash (freezing it
+/// out of future upgrades) and be discarded by the next upgrade. This file is
+/// not a directory, so the loader skips it and reconciliation never touches it.
+const PLUGIN_STATE_FILE: &str = "plugins-state.json";
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct PluginRuntimeState {
+    /// Explicit enable/disable choices, overriding `manifest.enabled`.
+    #[serde(default)]
+    overrides: BTreeMap<String, bool>,
+    /// Ids the user removed. Honoured at load time so an upgrade that
+    /// re-provisions the package directory cannot silently re-enable it.
+    #[serde(default)]
+    uninstalled: BTreeSet<String>,
+}
+
+/// A state snapshot whose writer lock is held for as long as the value lives,
+/// so the load and the matching store cannot interleave with another mutation.
+struct LockedPluginState<'a> {
+    state: PluginRuntimeState,
+    _lock: std::sync::MutexGuard<'a, ()>,
+}
+
+impl std::ops::Deref for LockedPluginState<'_> {
+    type Target = PluginRuntimeState;
+
+    fn deref(&self) -> &PluginRuntimeState {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for LockedPluginState<'_> {
+    fn deref_mut(&mut self) -> &mut PluginRuntimeState {
+        &mut self.state
+    }
+}
+
+/// Read the user install state. This is advisory data: a missing or corrupt
+/// file falls back to each manifest's own `enabled` flag rather than failing
+/// startup and taking every plugin down with it.
+fn read_plugin_state(directory: &Path) -> PluginRuntimeState {
+    match std::fs::read(directory.join(PLUGIN_STATE_FILE)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+            tracing::warn!(%error, "plugin state file is unreadable; using manifest defaults");
+            PluginRuntimeState::default()
+        }),
+        Err(_) => PluginRuntimeState::default(),
+    }
+}
+
+/// Plugin ids are also package directory names, and callers supply them from
+/// the API path, so reject anything that is not a bare slug before it reaches
+/// `Path::join` (`../../etc` would otherwise escape the plugin directory).
+fn validate_plugin_id(plugin_id: &str) -> DomainResult<()> {
+    if plugin_id.is_empty()
+        || plugin_id.len() > 64
+        || !plugin_id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+        })
+    {
+        return Err(DomainError::new(
+            ErrorCode::ConfigInvalid,
+            "invalid plugin id",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -531,7 +622,16 @@ pub struct PluginService {
     reply: Arc<ReplyService>,
     db: Arc<crate::storage::Db>,
     browser: Option<Arc<crate::browser::BrowserService>>,
-    plugins: Arc<HashMap<String, Arc<LoadedPlugin>>>,
+    /// Swappable so install/uninstall/toggle take effect without a restart.
+    plugins: Arc<ArcSwap<HashMap<String, Arc<LoadedPlugin>>>>,
+    /// Serialises the read-modify-write cycle on the state file. Without it,
+    /// two concurrent toggles would each load the same snapshot and the second
+    /// write would silently drop the first one's override.
+    state_lock: Arc<std::sync::Mutex<()>>,
+    /// Release-catalog package names, resolved once at load. Install and
+    /// uninstall refuse these: the next upgrade re-provisions them regardless,
+    /// so removing one would look like it worked and then silently come back.
+    managed: Arc<BTreeSet<String>>,
     load_issues: Arc<Vec<PluginLoadIssue>>,
     jobs: Arc<DashMap<Uuid, Arc<PluginJob>>>,
     active_jobs: Arc<tokio::sync::Semaphore>,
@@ -1121,6 +1221,7 @@ impl PluginService {
         crate::config::create_private_dir(&directory)?;
         let mut plugins = HashMap::new();
         let mut load_issues = Vec::new();
+        let state = read_plugin_state(&directory);
         let entries = std::fs::read_dir(&directory).map_err(|error| {
             DomainError::new(
                 ErrorCode::StorageError,
@@ -1137,8 +1238,17 @@ impl PluginService {
                 }
             };
             match load_plugin(&entry.path()) {
-                Ok(plugin) => {
+                Ok(mut plugin) => {
                     let plugin_id = plugin.manifest.id.clone();
+                    if state.uninstalled.contains(&plugin_id) {
+                        tracing::info!(
+                            plugin_id,
+                            "plugin package present but uninstalled by the user"
+                        );
+                        plugin.manifest.enabled = false;
+                    } else if let Some(enabled) = state.overrides.get(&plugin_id) {
+                        plugin.manifest.enabled = *enabled;
+                    }
                     match plugins.entry(plugin_id) {
                         std::collections::hash_map::Entry::Occupied(existing) => {
                             load_issues.push(PluginLoadIssue {
@@ -1161,12 +1271,20 @@ impl PluginService {
             }
         }
         load_issues.sort_by(|left, right| left.package.cmp(&right.package));
+        // A malformed embedded catalog must not stop the service from loading:
+        // the catalog is only consulted to protect release-owned packages.
+        let managed = crate::installation::catalog_managed_names().unwrap_or_else(|error| {
+            tracing::warn!(%error, "cannot read the embedded plugin catalog");
+            BTreeSet::new()
+        });
         Ok(Self {
             directory,
             reply,
             db,
             browser,
-            plugins: Arc::new(plugins),
+            plugins: Arc::new(ArcSwap::from_pointee(plugins)),
+            state_lock: Arc::new(std::sync::Mutex::new(())),
+            managed: Arc::new(managed),
             load_issues: Arc::new(load_issues),
             jobs: Arc::new(DashMap::new()),
             active_jobs: Arc::new(tokio::sync::Semaphore::new(MAX_ACTIVE_JOBS)),
@@ -1180,23 +1298,28 @@ impl PluginService {
         &self.directory
     }
 
+    /// Read-only snapshot of the registry. Callers must hold the returned map
+    /// for the whole read: an `ArcSwap::load` guard is not re-entrant, so
+    /// taking a fresh `load()` per field access would race a concurrent swap.
+    fn registry(&self) -> arc_swap::Guard<Arc<HashMap<String, Arc<LoadedPlugin>>>> {
+        self.plugins.load()
+    }
+
+    fn plugin(&self, plugin_id: &str) -> Option<Arc<LoadedPlugin>> {
+        self.registry().get(plugin_id).cloned()
+    }
+
+    /// Owned copy of the registry, for copy-on-write mutation before a swap.
+    fn registry_snapshot(&self) -> HashMap<String, Arc<LoadedPlugin>> {
+        let guard = self.plugins.load();
+        HashMap::clone(&guard)
+    }
+
     pub fn list(&self) -> Vec<PluginSummary> {
         let mut plugins = self
-            .plugins
+            .registry()
             .values()
-            .map(|plugin| PluginSummary {
-                id: plugin.manifest.id.clone(),
-                name: plugin.manifest.name.clone(),
-                version: plugin.manifest.version.clone(),
-                description: bounded_chars(&plugin.manifest.description, 240),
-                enabled: plugin.manifest.enabled,
-                actions: plugin
-                    .manifest
-                    .actions
-                    .iter()
-                    .map(|action| action.name.clone())
-                    .collect(),
-            })
+            .map(|plugin| summarize(plugin))
             .collect::<Vec<_>>();
         plugins.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
         plugins
@@ -1212,9 +1335,7 @@ impl PluginService {
         action: &str,
     ) -> DomainResult<Arc<LoadedPlugin>> {
         let plugin = self
-            .plugins
-            .get(plugin_id)
-            .cloned()
+            .plugin(plugin_id)
             .ok_or_else(|| DomainError::not_found(format!("plugin {plugin_id}")))?;
         if !plugin.manifest.enabled {
             return Err(DomainError::new(
@@ -1235,8 +1356,7 @@ impl PluginService {
     }
 
     pub fn describe(&self, id: &str) -> DomainResult<PluginDescription> {
-        self.plugins
-            .get(id)
+        self.plugin(id)
             .map(|plugin| PluginDescription {
                 manifest: plugin.manifest.clone(),
                 effective_limits: effective_plugin_limits(&plugin.manifest),
@@ -1245,73 +1365,146 @@ impl PluginService {
     }
 
     pub fn install(&self, plugin_id: &str) -> DomainResult<PluginSummary> {
-        let plugin = self
-            .plugins
-            .get(plugin_id)
-            .ok_or_else(|| DomainError::not_found(format!("plugin {plugin_id}")))?;
-
+        validate_plugin_id(plugin_id)?;
+        // Re-read from disk rather than trusting the registry: `install` is the
+        // only path that can pick up a package directory dropped into the
+        // plugin directory after startup.
         let plugin_dir = self.directory.join(plugin_id);
-        if !plugin_dir.exists() {
-            return Err(DomainError::not_found(format!("plugin package {plugin_id} not found on disk")));
+        let mut plugin = load_plugin(&plugin_dir).map_err(|error| {
+            if plugin_dir.is_dir() {
+                error
+            } else {
+                DomainError::not_found(format!("plugin package {plugin_id}"))
+            }
+        })?;
+        if plugin.manifest.id != plugin_id {
+            return Err(DomainError::new(
+                ErrorCode::ConfigInvalid,
+                format!(
+                    "plugin package directory {plugin_id} declares id {}",
+                    plugin.manifest.id
+                ),
+            ));
         }
+        plugin.manifest.enabled = true;
+        let summary = summarize(&plugin);
 
-        let mut manifest = plugin.manifest.clone();
-        manifest.enabled = true;
+        let mut state = self.locked_state();
+        state.uninstalled.remove(plugin_id);
+        state.overrides.insert(plugin_id.to_string(), true);
+        self.write_state(&state)?;
 
-        Ok(PluginSummary {
-            id: manifest.id.clone(),
-            name: manifest.name.clone(),
-            version: manifest.version.clone(),
-            description: bounded_chars(&manifest.description, 240),
-            enabled: true,
-            actions: manifest.actions.iter().map(|a| a.name.clone()).collect(),
-        })
+        let mut registry = self.registry_snapshot();
+        registry.insert(plugin_id.to_string(), Arc::new(plugin));
+        self.plugins.store(Arc::new(registry));
+        Ok(summary)
     }
 
     pub fn uninstall(&self, plugin_id: &str) -> DomainResult<()> {
-        let plugin_dir = self.directory.join(plugin_id);
-        if !plugin_dir.exists() {
-            return Err(DomainError::not_found(format!("plugin {plugin_id} not found")));
+        validate_plugin_id(plugin_id)?;
+        if !self.registry().contains_key(plugin_id) {
+            return Err(DomainError::not_found(format!("plugin {plugin_id}")));
+        }
+        // Release-catalog packages are re-provisioned by every upgrade, so
+        // removing one only appears to work until the next release. Refuse
+        // instead of silently resurrecting it later.
+        if self.managed.contains(plugin_id) {
+            return Err(DomainError::new(
+                ErrorCode::Forbidden,
+                format!(
+                    "plugin {plugin_id} ships with HuntProxy and is restored on upgrade; disable it instead"
+                ),
+            ));
         }
 
-        std::fs::remove_dir_all(&plugin_dir)
-            .map_err(|e| DomainError::new(ErrorCode::StorageError, format!("remove plugin: {e}")))?;
+        let mut state = self.locked_state();
+        state.overrides.remove(plugin_id);
+        state.uninstalled.insert(plugin_id.to_string());
+        self.write_state(&state)?;
 
+        let package = self.directory.join(plugin_id);
+        if package.is_dir() {
+            std::fs::remove_dir_all(&package).map_err(|error| {
+                DomainError::new(
+                    ErrorCode::StorageError,
+                    format!("remove plugin package: {error}"),
+                )
+            })?;
+        }
+
+        let mut registry = self.registry_snapshot();
+        registry.remove(plugin_id);
+        self.plugins.store(Arc::new(registry));
         Ok(())
     }
 
     pub fn toggle(&self, plugin_id: &str, enabled: bool) -> DomainResult<PluginSummary> {
+        validate_plugin_id(plugin_id)?;
         let plugin = self
-            .plugins
-            .get(plugin_id)
+            .plugin(plugin_id)
             .ok_or_else(|| DomainError::not_found(format!("plugin {plugin_id}")))?;
 
-        // Update the manifest on disk
-        let plugin_dir = self.directory.join(plugin_id);
-        let manifest_path = plugin_dir.join("plugin.json");
+        let mut state = self.locked_state();
+        if enabled && state.uninstalled.contains(plugin_id) {
+            return Err(DomainError::new(
+                ErrorCode::Forbidden,
+                format!("plugin {plugin_id} is uninstalled; install it before enabling"),
+            ));
+        }
+        // Always record the explicit choice rather than trying to decide
+        // whether it "matches" the manifest: `plugin.manifest.enabled` already
+        // has any previous override folded in, so comparing against it would
+        // drop the override and silently revert to the packaged default.
+        state.overrides.insert(plugin_id.to_string(), enabled);
+        self.write_state(&state)?;
 
-        let mut manifest = plugin.manifest.clone();
-        manifest.enabled = enabled;
+        // The manifest is left untouched on disk: release packages are
+        // checksummed file-by-file, so writing to `plugin.json` would change
+        // the package hash and freeze it out of future upgrades.
+        let mut reloaded = (*plugin).clone();
+        reloaded.manifest.enabled = enabled;
+        let summary = summarize(&reloaded);
+        let mut registry = self.registry_snapshot();
+        registry.insert(plugin_id.to_string(), Arc::new(reloaded));
+        self.plugins.store(Arc::new(registry));
+        Ok(summary)
+    }
 
-        let json = serde_json::to_vec_pretty(&manifest)
-            .map_err(|e| DomainError::new(ErrorCode::StorageError, format!("serialize manifest: {e}")))?;
+    /// Read the state and hold the lock across the caller's read-modify-write,
+    /// so a concurrent mutation cannot interleave between the load and the
+    /// store and lose an override.
+    fn locked_state(&self) -> LockedPluginState<'_> {
+        let lock = self
+            .state_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let state = read_plugin_state(&self.directory);
+        LockedPluginState { state, _lock: lock }
+    }
 
-        std::fs::write(&manifest_path, json)
-            .map_err(|e| DomainError::new(ErrorCode::StorageError, format!("write manifest: {e}")))?;
-
-        // Update in-memory cache
-        let mut plugins = self.plugins.as_ref().clone();
-        // Note: In production, you'd want to reload the plugin here
-        // For now, just return the updated summary
-
-        Ok(PluginSummary {
-            id: manifest.id.clone(),
-            name: manifest.name.clone(),
-            version: manifest.version.clone(),
-            description: bounded_chars(&manifest.description, 240),
-            enabled: manifest.enabled,
-            actions: manifest.actions.iter().map(|a| a.name.clone()).collect(),
-        })
+    fn write_state(&self, state: &PluginRuntimeState) -> DomainResult<()> {
+        let encoded = serde_json::to_vec_pretty(state).map_err(|error| {
+            DomainError::new(
+                ErrorCode::StorageError,
+                format!("encode plugin state: {error}"),
+            )
+        })?;
+        // Same-directory temp + rename: a crash mid-write must not leave a
+        // truncated state file behind, since that would drop every override.
+        let path = self.directory.join(PLUGIN_STATE_FILE);
+        let temporary = self
+            .directory
+            .join(format!(".{PLUGIN_STATE_FILE}.{}.tmp", Uuid::new_v4()));
+        let result = std::fs::write(&temporary, &encoded)
+            .and_then(|()| std::fs::rename(&temporary, &path));
+        if let Err(error) = result {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(DomainError::new(
+                ErrorCode::StorageError,
+                format!("write plugin state: {error}"),
+            ));
+        }
+        Ok(())
     }
 
     pub async fn preview(
@@ -1517,9 +1710,7 @@ impl PluginService {
             .map(|entry| entry.clone())
             .ok_or_else(|| DomainError::not_found("plugin job"))?;
         let plugin = self
-            .plugins
-            .get(&job.view.read().plugin_id)
-            .cloned()
+            .plugin(&job.view.read().plugin_id)
             .ok_or_else(|| DomainError::not_found("plugin used by job is no longer installed"))?;
         let checkpoint = job.analysis_checkpoint.lock().clone().ok_or_else(|| {
             DomainError::new(
@@ -2845,9 +3036,8 @@ impl PluginService {
                 validate_gateway_stage(&stage_name)?;
                 validate_regions(&regions)?;
                 let helper = self
-                    .plugins
-                    .get(plugin_id)
-                    .and_then(|plugin| plugin.resources.get("aws-control"))
+                    .plugin(plugin_id)
+                    .and_then(|plugin| plugin.resources.get("aws-control").cloned())
                     .ok_or_else(|| {
                         DomainError::new(
                             ErrorCode::ConfigInvalid,
@@ -2869,7 +3059,7 @@ impl PluginService {
                     ));
                 }
                 let gateways = provision_rotation_gateways(
-                    helper,
+                    &helper,
                     &credentials,
                     &target_url,
                     &stage_name,
@@ -2907,9 +3097,8 @@ impl PluginService {
                     .deactivate_ip_rotation(project_id, target_url)
                     .await?;
                 let helper = self
-                    .plugins
-                    .get(plugin_id)
-                    .and_then(|plugin| plugin.resources.get("aws-control"))
+                    .plugin(plugin_id)
+                    .and_then(|plugin| plugin.resources.get("aws-control").cloned())
                     .ok_or_else(|| {
                         DomainError::new(
                             ErrorCode::ConfigInvalid,
@@ -2926,7 +3115,7 @@ impl PluginService {
                 let cleanup = delete_rotation_gateways(
                     &self.db,
                     project_id,
-                    helper,
+                    &helper,
                     &credentials,
                     &profile,
                     cancel,
@@ -7143,7 +7332,9 @@ mod tests {
             reply,
             db,
             browser: None,
-            plugins: Arc::new(HashMap::new()),
+            plugins: Arc::new(ArcSwap::from_pointee(HashMap::new())),
+            state_lock: Arc::new(std::sync::Mutex::new(())),
+            managed: Arc::new(BTreeSet::new()),
             load_issues: Arc::new(Vec::new()),
             jobs: Arc::new(DashMap::new()),
             active_jobs: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -8089,7 +8280,11 @@ mod tests {
             .as_bool()
             .unwrap());
 
-        let mut timeout_plugin = service.plugins.get("retry-test").unwrap().as_ref().clone();
+        let mut timeout_plugin = service
+            .plugin("retry-test")
+            .expect("retry-test plugin")
+            .as_ref()
+            .clone();
         timeout_plugin.manifest.limits.timeout_ms = Some(5000);
         timeout_plugin.manifest.limits.js_stage_timeout_ms = Some(10000);
         timeout_plugin.script = Arc::from(
@@ -9410,5 +9605,134 @@ mod tests {
         assert!(text.starts_with("POST /apply?mode=one HTTP/1.1\r\nHost: example.test:8443\r\n"));
         assert_eq!(text.matches("Content-Length:").count(), 1);
         assert!(text.ends_with("Connection: close\r\n\r\ngo"));
+    }
+
+    /// Minimal installable package: a manifest plus the entrypoint its digest
+    /// covers. `enabled` is the manifest default the runtime state overrides.
+    fn write_plugin_package(plugin_directory: &Path, id: &str, enabled: bool) -> PathBuf {
+        let package = plugin_directory.join(id);
+        std::fs::create_dir_all(&package).unwrap();
+        let script = "globalThis.HuntProxyPlugin = { plan() { return {operations: []}; }, analyze() { return {}; } };";
+        std::fs::write(package.join("index.js"), script).unwrap();
+        std::fs::write(
+            package.join("plugin.json"),
+            serde_json::to_vec(&json!({
+                "schema_version": 1,
+                "id": id,
+                "name": id,
+                "version": "1.0.0",
+                "description": "fixture",
+                "enabled": enabled,
+                "entrypoint": "index.js",
+                "entrypoint_sha256": hex::encode(Sha256::digest(script.as_bytes())),
+                "actions": [{ "name": "scan", "description": "scan" }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        package
+    }
+
+    async fn plugin_test_service(plugin_directory: PathBuf) -> PluginService {
+        let db = Arc::new(crate::storage::Db::open_in_memory().await.unwrap());
+        let reply = Arc::new(ReplyService {
+            db: db.clone(),
+            transport: Arc::new(UnusedTransport),
+            placeholder_key: crate::reply::PlaceholderKey::from_bytes(vec![9; 32]),
+            upstream_proxies: Default::default(),
+        });
+        PluginService::load(plugin_directory, db, reply).unwrap()
+    }
+
+    #[tokio::test]
+    async fn toggle_takes_effect_without_restart_and_survives_reload() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_directory = directory.path().join("plugins");
+        write_plugin_package(&plugin_directory, "toggle-test", true);
+        let service = plugin_test_service(plugin_directory.clone()).await;
+
+        let summary = service.toggle("toggle-test", false).unwrap();
+        assert!(!summary.enabled);
+        assert!(
+            service.enabled_plugin_action("toggle-test", "scan").is_err(),
+            "a disabled plugin must not run before any restart"
+        );
+
+        // The manifest keeps its packaged value: release packages are hashed
+        // file-by-file, so persisting the toggle there would freeze the
+        // package out of future upgrades.
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(plugin_directory.join("toggle-test/plugin.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest["enabled"], json!(true));
+
+        let reloaded = plugin_test_service(plugin_directory).await;
+        assert!(
+            !reloaded.plugin("toggle-test").unwrap().manifest.enabled,
+            "the toggle must survive a restart"
+        );
+    }
+
+    #[tokio::test]
+    async fn uninstall_cannot_reach_outside_the_plugin_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_directory = directory.path().join("plugins");
+        write_plugin_package(&plugin_directory, "traversal-test", true);
+        let victim = plugin_directory.join("../keep-me");
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("important.txt"), b"keep").unwrap();
+        let service = plugin_test_service(plugin_directory).await;
+
+        // `../keep-me` resolves outside the plugin directory, so it must be
+        // rejected as a malformed id rather than followed to the filesystem.
+        let error = service.uninstall("../keep-me").unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ConfigInvalid);
+        assert!(victim.join("important.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn install_picks_up_a_package_added_after_startup() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_directory = directory.path().join("plugins");
+        write_plugin_package(&plugin_directory, "existing", true);
+        let service = plugin_test_service(plugin_directory.clone()).await;
+        assert_eq!(service.list().len(), 1);
+
+        // Dropped into the directory while the service is running.
+        write_plugin_package(&plugin_directory, "dropped-in", true);
+        assert_eq!(service.list().len(), 1, "not visible before install");
+
+        let summary = service.install("dropped-in").unwrap();
+        assert!(summary.enabled);
+        assert_eq!(service.list().len(), 2);
+        assert!(service.enabled_plugin_action("dropped-in", "scan").is_ok());
+
+        assert_eq!(
+            service.install("never-written").unwrap_err().code(),
+            ErrorCode::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn release_catalog_packages_are_installed_but_not_removable() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_directory = directory.path().join("plugins");
+        let service = plugin_test_service(plugin_directory).await;
+        let bundled = service
+            .managed
+            .iter()
+            .next()
+            .expect("the release catalog ships first-party plugins")
+            .clone();
+        // Simulate the package directory the release installer would provision.
+        write_plugin_package(service.directory(), &bundled, true);
+        service.install(&bundled).unwrap();
+
+        // Removing it would appear to work and then be undone by the next
+        // upgrade, so it is refused outright.
+        let error = service.uninstall(&bundled).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Forbidden);
+        assert!(service.directory().join(&bundled).is_dir());
     }
 }

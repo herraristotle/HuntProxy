@@ -6,7 +6,7 @@ use flate2::read::GzDecoder;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -151,6 +151,22 @@ pub fn bundled_plugin_names() -> DomainResult<Vec<String>> {
         .ok_or_else(|| install_error("embedded plugin catalog has no current snapshot"))?;
     validate_package_names(current.packages.keys())?;
     Ok(current.packages.keys().cloned().collect())
+}
+
+/// Package names owned by the embedded release catalog, across every snapshot
+/// — a package dropped from the current release is still release-managed, so
+/// its directory can still be reconciled away on the next upgrade.
+///
+/// Runtime install/uninstall must never treat one of these directories as
+/// user-owned state: `reconcile_plugins` overwrites exactly these names.
+pub fn catalog_managed_names() -> DomainResult<BTreeSet<String>> {
+    let catalog = embedded_plugin_catalog()?;
+    let mut names = BTreeSet::new();
+    for snapshot in &catalog.snapshots {
+        validate_package_names(snapshot.packages.keys())?;
+        names.extend(snapshot.packages.keys().cloned());
+    }
+    Ok(names)
 }
 
 fn embedded_plugin_catalog() -> DomainResult<PluginCatalog> {
