@@ -185,6 +185,12 @@ impl From<std::str::Utf8Error> for DomainError {
     }
 }
 
+impl From<serde_json::Error> for DomainError {
+    fn from(err: serde_json::Error) -> Self {
+        Self::invalid(format!("JSON error: {}", err))
+    }
+}
+
 pub type DomainResult<T> = Result<T, DomainError>;
 
 /// Structured API/MCP error envelope (never contains secrets).
