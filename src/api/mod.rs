@@ -259,10 +259,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/v1/projects/{id}/oast/{sid}/interactions",
             get(oast_interactions),
         )
-        .route(
-            "/api/v1/projects/{id}/oast/{sid}/stop",
-            post(oast_stop),
-        )
+        .route("/api/v1/projects/{id}/oast/{sid}/stop", post(oast_stop))
         .route(
             "/api/v1/projects/{id}/exchanges/compare",
             get(compare_exchanges),
@@ -337,7 +334,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/v1/projects/{id}/crawl-jobs/{jid}/resume",
             post(resume_crawl),
         )
-        .route("/api/v1/projects/{id}/crawl-jobs/clear", post(clear_crawl_jobs))
+        .route(
+            "/api/v1/projects/{id}/crawl-jobs/clear",
+            post(clear_crawl_jobs),
+        )
         .route(
             "/api/v1/projects/{id}/crawl-jobs/{jid}/title",
             patch(rename_crawl),
@@ -394,9 +394,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/doctor", get(doctor))
         .route("/api/v1/extensions", get(list_extensions))
         .route("/api/v1/extensions/{plugin_id}", get(describe_extension))
-        .route("/api/v1/extensions/{plugin_id}/install", post(install_extension))
-        .route("/api/v1/extensions/{plugin_id}/uninstall", post(uninstall_extension))
-        .route("/api/v1/extensions/{plugin_id}/toggle", post(toggle_extension))
+        .route(
+            "/api/v1/extensions/{plugin_id}/install",
+            post(install_extension),
+        )
+        .route(
+            "/api/v1/extensions/{plugin_id}/uninstall",
+            post(uninstall_extension),
+        )
+        .route(
+            "/api/v1/extensions/{plugin_id}/toggle",
+            post(toggle_extension),
+        )
         .route(
             "/api/v1/oast-providers",
             get(list_oast_providers).post(create_oast_provider),
@@ -1621,8 +1630,9 @@ async fn oast_poll(
     Path((id, sid)): Path<(i64, i64)>,
 ) -> Response {
     match state.oast.poll(id, sid).await {
-        Ok(interactions) => Json(serde_json::json!({ "interactions": interactions }))
-            .into_response(),
+        Ok(interactions) => {
+            Json(serde_json::json!({ "interactions": interactions })).into_response()
+        }
         Err(error) => error_response(error),
     }
 }
@@ -2517,7 +2527,11 @@ async fn resume_crawl(
     State(state): State<Arc<AppState>>,
     Path((id, jid)): Path<(i64, i64)>,
 ) -> Response {
-    match state.crawl_jobs.resume(ProjectId(id), CrawlJobId(jid)).await {
+    match state
+        .crawl_jobs
+        .resume(ProjectId(id), CrawlJobId(jid))
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => error_response(e),
     }
