@@ -2,6 +2,16 @@
 version = 2
 yanked = "warn"
 
+ignore = [
+  # RUSTSEC-2023-0071: Marvin Attack - timing side-channel in RSA decryption.
+  # No patch available as of 2026-10-19. Upstream work in progress:
+  # https://github.com/RustCrypto/RSA/issues/626
+  # HuntProxy uses rsa for OAST interactsh session registration (ephemeral
+  # RSA-2048 keypairs, single decrypt per session). Attacker cannot control
+  # ciphertext in our threat model. Risk documented and accepted.
+  { id = "RUSTSEC-2023-0071" },
+]
+
 [licenses]
 version = 2
 allow = [
