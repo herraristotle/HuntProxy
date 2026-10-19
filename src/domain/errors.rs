@@ -179,6 +179,12 @@ impl DomainError {
     }
 }
 
+impl From<std::str::Utf8Error> for DomainError {
+    fn from(err: std::str::Utf8Error) -> Self {
+        Self::invalid(format!("invalid UTF-8: {}", err))
+    }
+}
+
 pub type DomainResult<T> = Result<T, DomainError>;
 
 /// Structured API/MCP error envelope (never contains secrets).
