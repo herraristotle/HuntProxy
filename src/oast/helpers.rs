@@ -10,7 +10,6 @@ use base64::Engine as _;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use rand::RngCore;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
-use rsa::rand_core::OsRng;
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 use sha2::Sha256;
 
@@ -81,7 +80,7 @@ pub(crate) fn mint_label(correlation_id: &str) -> String {
 /// b64 payload is `base64(PEM(PKIX SPKI))` — the exact `public-key` field the
 /// interactsh server feeds to `pem.Decode` + `x509.ParsePKIXPublicKey`.
 pub(crate) fn generate_rsa_keypair() -> DomainResult<(String, String)> {
-    let private = RsaPrivateKey::new(&mut OsRng, RSA_BITS)
+    let private = RsaPrivateKey::new(&mut rand::thread_rng(), RSA_BITS)
         .map_err(|e| internal_error(format!("rsa keygen: {e}")))?;
     let private_pem = private
         .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
@@ -216,14 +215,14 @@ mod tests {
 
     #[test]
     fn oaep_and_ctr_decrypt_round_trip() {
-        let private = RsaPrivateKey::new(&mut OsRng, RSA_BITS).unwrap();
+        let private = RsaPrivateKey::new(&mut rand::thread_rng(), RSA_BITS).unwrap();
         let public = RsaPublicKey::from(&private);
 
         // Wrap a random AES key exactly like the server does.
         let mut aes_key = [7u8; 32];
         rand::thread_rng().fill_bytes(&mut aes_key);
         let wrapped = public
-            .encrypt(&mut OsRng, Oaep::new::<Sha256>(), &aes_key)
+            .encrypt(&mut rand::thread_rng(), Oaep::new::<Sha256>(), &aes_key)
             .unwrap();
         let unwrapped = unwrap_aes_key(
             private
