@@ -1495,8 +1495,8 @@ impl PluginService {
         let temporary = self
             .directory
             .join(format!(".{PLUGIN_STATE_FILE}.{}.tmp", Uuid::new_v4()));
-        let result = std::fs::write(&temporary, &encoded)
-            .and_then(|()| std::fs::rename(&temporary, &path));
+        let result =
+            std::fs::write(&temporary, &encoded).and_then(|()| std::fs::rename(&temporary, &path));
         if let Err(error) = result {
             let _ = std::fs::remove_file(&temporary);
             return Err(DomainError::new(
@@ -9654,7 +9654,9 @@ mod tests {
         let summary = service.toggle("toggle-test", false).unwrap();
         assert!(!summary.enabled);
         assert!(
-            service.enabled_plugin_action("toggle-test", "scan").is_err(),
+            service
+                .enabled_plugin_action("toggle-test", "scan")
+                .is_err(),
             "a disabled plugin must not run before any restart"
         );
 

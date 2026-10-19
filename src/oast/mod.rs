@@ -8,15 +8,13 @@ pub mod providers;
 
 use crate::app::AppState;
 use crate::config::{OastConfig, OastProviderKind};
-use crate::domain::{
-    DomainError, DomainResult, ErrorCode, FuzzJobId, ProjectId,
-};
+use crate::domain::{DomainError, DomainResult, ErrorCode, FuzzJobId, ProjectId};
 use crate::fuzzer::FuzzTemplate;
 use crate::storage::{
-    now_rfc3339, NewOastInteraction, NewOastSession, OastProviderRow, OastSessionRow, Db,
+    now_rfc3339, Db, NewOastInteraction, NewOastSession, OastProviderRow, OastSessionRow,
 };
-pub use providers::{Interaction, OastProvider, ProviderRegistration, RegisterOptions};
 use dashmap::DashMap;
+pub use providers::{Interaction, OastProvider, ProviderRegistration, RegisterOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -152,7 +150,11 @@ pub(crate) async fn load_oast_job_context(
     let Some(session_id) = template.oast_session_id else {
         return Ok(None);
     };
-    let labels = match state.oast.label_case_map(project_id.get(), session_id).await {
+    let labels = match state
+        .oast
+        .label_case_map(project_id.get(), session_id)
+        .await
+    {
         Ok(entries) => entries
             .into_iter()
             .filter_map(|(label, case_index)| Some((case_index? as u64, label)))
@@ -203,7 +205,8 @@ impl OastService {
     }
 
     fn poll_interval(&self) -> Duration {
-        Duration::from_millis(self.config.poll_interval_ms).clamp(MIN_POLL_INTERVAL, MAX_POLL_INTERVAL)
+        Duration::from_millis(self.config.poll_interval_ms)
+            .clamp(MIN_POLL_INTERVAL, MAX_POLL_INTERVAL)
     }
 
     /// OAST is available when either `[oast]` is configured or the provider
@@ -302,10 +305,7 @@ impl OastService {
             kind,
             server: row.server.clone(),
             domain,
-            token: row
-                .token
-                .clone()
-                .filter(|t| !t.is_empty()),
+            token: row.token.clone().filter(|t| !t.is_empty()),
         })
     }
 
@@ -357,8 +357,7 @@ impl OastService {
                 name,
                 kind.as_str().to_string(),
                 new.server.trim().to_string(),
-                new
-                    .domain
+                new.domain
                     .map(|d| d.trim().to_string())
                     .filter(|d| !d.is_empty()),
                 new.token.filter(|t| !t.is_empty()),
@@ -433,10 +432,7 @@ impl OastService {
         Ok(Self::provider_view(&row))
     }
 
-    pub async fn set_provider_default(
-        &self,
-        provider_id: i64,
-    ) -> DomainResult<OastProviderView> {
+    pub async fn set_provider_default(&self, provider_id: i64) -> DomainResult<OastProviderView> {
         self.db.set_oast_provider_default(provider_id).await?;
         let row = self.db.get_oast_provider(provider_id).await?;
         Ok(Self::provider_view(&row))
@@ -486,10 +482,7 @@ impl OastService {
             kind: row.kind.clone(),
             server: row.server.clone(),
             domain: row.domain.clone(),
-            token_configured: row
-                .token
-                .as_deref()
-                .is_some_and(|t| !t.is_empty()),
+            token_configured: row.token.as_deref().is_some_and(|t| !t.is_empty()),
             enabled: row.enabled,
             is_default: row.is_default,
             created_at: format_time(&row.created_at),
@@ -651,11 +644,9 @@ impl OastService {
                 .domain
                 .as_deref()
                 .map(|domain| format!("{label}.{}", domain.trim_end_matches('.'))),
-            OastProviderKind::Postbin | OastProviderKind::Webhooksite => Some(format!(
-                "{}/{}",
-                row.server.trim_end_matches('/'),
-                label
-            )),
+            OastProviderKind::Postbin | OastProviderKind::Webhooksite => {
+                Some(format!("{}/{}", row.server.trim_end_matches('/'), label))
+            }
             OastProviderKind::Custom => Some(label.to_string()),
         }
     }
@@ -741,10 +732,9 @@ impl OastService {
     fn label_of(row: &OastSessionRow, payload_url: &str) -> DomainResult<String> {
         match Self::provider_kind_of(row)? {
             OastProviderKind::Interactsh => {
-                let domain = row
-                    .domain
-                    .as_deref()
-                    .ok_or_else(|| DomainError::new(ErrorCode::Internal, "session missing domain"))?;
+                let domain = row.domain.as_deref().ok_or_else(|| {
+                    DomainError::new(ErrorCode::Internal, "session missing domain")
+                })?;
                 let suffix = format!(".{}", domain.trim_end_matches('.'));
                 payload_url
                     .strip_suffix(&suffix)
@@ -765,10 +755,11 @@ impl OastService {
 
     pub async fn list(&self, project_id: i64) -> DomainResult<Vec<OastSessionView>> {
         self.require_enabled().await?;
-        self.db
-            .list_oast_sessions(project_id)
-            .await
-            .map(|rows| rows.into_iter().map(|(row, count)| Self::view(&row, count)).collect())
+        self.db.list_oast_sessions(project_id).await.map(|rows| {
+            rows.into_iter()
+                .map(|(row, count)| Self::view(&row, count))
+                .collect()
+        })
     }
 
     /// Poll a session now: fetch, persist interactions (deduped), and return
@@ -880,11 +871,7 @@ impl OastService {
 
     /// Best-effort deregister, always marks the session stopped locally and
     /// drops it from the poller.
-    pub async fn stop(
-        &self,
-        project_id: i64,
-        session_id: i64,
-    ) -> DomainResult<OastSessionView> {
+    pub async fn stop(&self, project_id: i64, session_id: i64) -> DomainResult<OastSessionView> {
         self.require_enabled().await?;
         let row = self.db.get_oast_session(project_id, session_id).await?;
         if let Err(error) = self.dispatch_deregister(&row).await {
@@ -894,7 +881,9 @@ impl OastService {
                 "oast deregister failed; marking stopped locally"
             );
         }
-        self.db.set_oast_session_status(session_id, "stopped").await?;
+        self.db
+            .set_oast_session_status(session_id, "stopped")
+            .await?;
         let row = self.db.get_oast_session(project_id, session_id).await?;
         let count = self
             .db
@@ -1039,9 +1028,7 @@ mod tests {
                 wreq::header::AUTHORIZATION.as_str(),
                 "Bearer s3cret",
             ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!([]),
-            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
             .mount(&server)
             .await;
         let db = Arc::new(Db::open_in_memory().await.unwrap());
@@ -1146,8 +1133,7 @@ mod tests {
         let server_registry = MockServer::start().await;
         let db = Arc::new(Db::open_in_memory().await.unwrap());
         let project = seed_project(&db).await;
-        let service =
-            OastService::new(db, postbin_config(&server_config.uri())).unwrap();
+        let service = OastService::new(db, postbin_config(&server_config.uri())).unwrap();
 
         // User row added before any resolve becomes the default.
         let row = service
@@ -1224,7 +1210,10 @@ mod tests {
             )
             .await
             .unwrap();
-        let err = service.create(project, None, false, None).await.unwrap_err();
+        let err = service
+            .create(project, None, false, None)
+            .await
+            .unwrap_err();
         assert_eq!(err.code(), ErrorCode::InvalidArgument);
 
         // Choosing explicitly resolves the ambiguity.
@@ -1334,10 +1323,7 @@ mod tests {
         let made_default = service.set_provider_default(second.id).await.unwrap();
         assert!(made_default.is_default);
         let providers = service.list_providers().await.unwrap();
-        assert_eq!(
-            providers.iter().filter(|p| p.is_default).count(),
-            1
-        );
+        assert_eq!(providers.iter().filter(|p| p.is_default).count(), 1);
 
         // Delete + 404s.
         service.delete_provider(second.id).await.unwrap();
@@ -1407,7 +1393,10 @@ mod tests {
         let project = seed_project(&db).await;
         let service = OastService::new(db, postbin_config(&server.uri())).unwrap();
 
-        let session = service.create(project, Some("blind-ssrf".into()), true, None).await.unwrap();
+        let session = service
+            .create(project, Some("blind-ssrf".into()), true, None)
+            .await
+            .unwrap();
         assert_eq!(session.provider, "postbin");
         assert_eq!(session.status, "active");
         let expected_url = format!("{}/bin-1", server.uri());
@@ -1428,7 +1417,12 @@ mod tests {
         let stopped = service.stop(project, session.session_id).await.unwrap();
         assert_eq!(stopped.status, "stopped");
         // Stopped sessions leave the watch list (poller skips them).
-        assert!(service.db.list_oast_watch_sessions().await.unwrap().is_empty());
+        assert!(service
+            .db
+            .list_oast_watch_sessions()
+            .await
+            .unwrap()
+            .is_empty());
         server.verify().await;
     }
 
@@ -1447,9 +1441,7 @@ mod tests {
         // integration test in tests/api_oast.rs.
         Mock::given(method("GET"))
             .and(path("/poll"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
@@ -1468,8 +1460,14 @@ mod tests {
         assert_eq!(url.len(), 33 + ".oast.example.com".len());
 
         // Distinct labels on one session, persisted for case correlation.
-        let a = service.new_url(project, session.session_id, Some(0)).await.unwrap();
-        let b = service.new_url(project, session.session_id, Some(1)).await.unwrap();
+        let a = service
+            .new_url(project, session.session_id, Some(0))
+            .await
+            .unwrap();
+        let b = service
+            .new_url(project, session.session_id, Some(1))
+            .await
+            .unwrap();
         assert_ne!(a.payload_url, b.payload_url);
         assert_ne!(a.label, b.label);
         assert_eq!(a.label.len(), 33);
@@ -1544,7 +1542,12 @@ mod tests {
         let listed = service.list(project).await.unwrap();
         assert_eq!(listed[0].status, "expired");
         // Expired sessions leave the background poller's watch list.
-        assert!(service.db.list_oast_watch_sessions().await.unwrap().is_empty());
+        assert!(service
+            .db
+            .list_oast_watch_sessions()
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

@@ -128,12 +128,7 @@ static PATTERNS: Lazy<Vec<Pattern>> = Lazy::new(|| {
             name: "WordPress",
             category: "CMS",
             header_checks: vec![],
-            html_patterns: vec![
-                r"wp-content/",
-                r"wp-includes/",
-                r"wordpress",
-                r"wp-json/",
-            ],
+            html_patterns: vec![r"wp-content/", r"wp-includes/", r"wordpress", r"wp-json/"],
             js_patterns: vec![],
             version_pattern: Some(r#"ver=([0-9.]+)"#),
         },
@@ -174,7 +169,10 @@ static PATTERNS: Lazy<Vec<Pattern>> = Lazy::new(|| {
             name: "Tailwind CSS",
             category: "CSS framework",
             header_checks: vec![],
-            html_patterns: vec![r"tailwind", r#"class=["'][^"']*\b(?:flex|grid|p-|m-|w-|h-)"#],
+            html_patterns: vec![
+                r"tailwind",
+                r#"class=["'][^"']*\b(?:flex|grid|p-|m-|w-|h-)"#,
+            ],
             js_patterns: vec![],
             version_pattern: None,
         },
@@ -215,10 +213,7 @@ static PATTERNS: Lazy<Vec<Pattern>> = Lazy::new(|| {
     ]
 });
 
-pub fn fingerprint_from_response(
-    headers: &[(String, String)],
-    body: Option<&str>,
-) -> Fingerprint {
+pub fn fingerprint_from_response(headers: &[(String, String)], body: Option<&str>) -> Fingerprint {
     let mut detected = HashMap::<&'static str, Technology>::new();
     let mut server = None;
     let mut powered_by = Vec::new();
@@ -360,7 +355,8 @@ mod tests {
     #[test]
     fn test_wordpress_detection() {
         let headers = vec![];
-        let body = r#"<link rel="stylesheet" href="/wp-content/themes/twentytwenty/style.css?ver=6.4">"#;
+        let body =
+            r#"<link rel="stylesheet" href="/wp-content/themes/twentytwenty/style.css?ver=6.4">"#;
         let fp = fingerprint_from_response(&headers, Some(body));
         assert!(fp.technologies.iter().any(|t| t.name == "WordPress"));
     }

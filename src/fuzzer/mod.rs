@@ -1111,15 +1111,12 @@ async fn execute_case(
                 .await?
                 .payload_url
         } else {
-            template
-                .oast_payload_url
-                .clone()
-                .ok_or_else(|| {
-                    DomainError::new(
-                        ErrorCode::Internal,
-                        "oast fuzz template is missing its payload url",
-                    )
-                })?
+            template.oast_payload_url.clone().ok_or_else(|| {
+                DomainError::new(
+                    ErrorCode::Internal,
+                    "oast fuzz template is missing its payload url",
+                )
+            })?
         };
         for slot in &mut case.values {
             if slot.as_deref() == Some(OAST_PLACEHOLDER) {
@@ -1913,13 +1910,9 @@ mod tests {
             placeholder_key: PlaceholderKey::from_bytes(vec![5; 32]),
             upstream_proxies: Default::default(),
         });
-        let oast = crate::oast::OastService::new(
-            db.clone(),
-            crate::config::OastConfig::default(),
-        )
-        .unwrap();
-        let service =
-            FuzzerService::new(db, reply, oast, PlaceholderKey::from_bytes(vec![6; 32]));
+        let oast = crate::oast::OastService::new(db.clone(), crate::config::OastConfig::default())
+            .unwrap();
+        let service = FuzzerService::new(db, reply, oast, PlaceholderKey::from_bytes(vec![6; 32]));
         let first = service.project_limiter(&project).unwrap();
         let second = service.project_limiter(&project).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
@@ -2011,7 +2004,10 @@ mod tests {
         // their substituted payloads are persisted before dispatch.
         wait_for_terminal_job(&db, project, job.id).await;
 
-        let raw = db.load_fuzz_template_for_project(project, job.id).await.unwrap();
+        let raw = db
+            .load_fuzz_template_for_project(project, job.id)
+            .await
+            .unwrap();
         let stored: FuzzTemplate = serde_json::from_str(&raw).unwrap();
         let session_id = stored.oast_session_id.expect("session recorded on job");
         assert!(stored.oast_per_case_labels);
@@ -2076,7 +2072,10 @@ mod tests {
         let job = service.start(project, template, false).await.unwrap();
         wait_for_terminal_job(&db, project, job.id).await;
 
-        let raw = db.load_fuzz_template_for_project(project, job.id).await.unwrap();
+        let raw = db
+            .load_fuzz_template_for_project(project, job.id)
+            .await
+            .unwrap();
         let stored: FuzzTemplate = serde_json::from_str(&raw).unwrap();
         let session_id = stored.oast_session_id.expect("session recorded on job");
         assert!(!stored.oast_per_case_labels);
@@ -2117,7 +2116,10 @@ mod tests {
         let job = service.start(project, template, false).await.unwrap();
         wait_for_terminal_job(&db, project, job.id).await;
 
-        let raw = db.load_fuzz_template_for_project(project, job.id).await.unwrap();
+        let raw = db
+            .load_fuzz_template_for_project(project, job.id)
+            .await
+            .unwrap();
         assert!(!raw.contains("oast_session_id"));
         assert!(!raw.contains("attacker.invalid"));
         let stored: FuzzTemplate = serde_json::from_str(&raw).unwrap();

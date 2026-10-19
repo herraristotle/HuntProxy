@@ -97,27 +97,25 @@ impl OastProvider for CustomProvider {
             .map(|value| {
                 let event: CustomEvent = serde_json::from_value(value.clone())
                     .unwrap_or_else(|_| CustomEvent::default());
-                let id = event
-                    .id
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| {
-                        // Position-based ids are unstable across polls (the
-                        // server can reorder or truncate its event list),
-                        // which breaks the store's (session, full_id,
-                        // timestamp) dedupe. Fingerprint the event payload
-                        // instead so repeated polls dedupe cleanly.
-                        let bytes = serde_json::to_vec(&value).unwrap_or_default();
-                        let digest = hex::encode(sha2::Sha256::digest(&bytes));
-                        format!("custom-{}", &digest[..16])
-                    });
+                let id = event.id.filter(|s| !s.is_empty()).unwrap_or_else(|| {
+                    // Position-based ids are unstable across polls (the
+                    // server can reorder or truncate its event list),
+                    // which breaks the store's (session, full_id,
+                    // timestamp) dedupe. Fingerprint the event payload
+                    // instead so repeated polls dedupe cleanly.
+                    let bytes = serde_json::to_vec(&value).unwrap_or_default();
+                    let digest = hex::encode(sha2::Sha256::digest(&bytes));
+                    format!("custom-{}", &digest[..16])
+                });
                 Interaction {
-                    protocol: event.protocol.filter(|s| !s.is_empty()).unwrap_or_else(|| "http".into()),
+                    protocol: event
+                        .protocol
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "http".into()),
                     unique_id: id.clone(),
                     full_id: id,
                     remote_address: event.source.unwrap_or_default(),
-                    raw_request: event
-                        .raw_request
-                        .unwrap_or_else(|| value.to_string()),
+                    raw_request: event.raw_request.unwrap_or_else(|| value.to_string()),
                     raw_response: event.raw_response.unwrap_or_default(),
                     timestamp: normalize_timestamp(event.timestamp),
                 }
@@ -142,7 +140,10 @@ fn normalize_timestamp(value: Option<serde_json::Value>) -> String {
             .and_then(|ms| {
                 time::OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000).ok()
             })
-            .and_then(|ts| ts.format(&time::format_description::well_known::Rfc3339).ok())
+            .and_then(|ts| {
+                ts.format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            })
             .unwrap_or_else(|| "1970-01-01T00:00:00Z".into()),
         Some(serde_json::Value::String(s)) if !s.is_empty() => s,
         _ => "1970-01-01T00:00:00Z".to_string(),

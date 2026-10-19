@@ -92,9 +92,8 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
                 }
                 // Mainline contract: a 200 that does not say "registration
                 // successful" is a failed registration.
-                ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({ "message": "registration successful" }),
-                )
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "message": "registration successful" }))
             }
         })
         .expect(1)
@@ -126,10 +125,9 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
 
                 let mut aes_key = [0u8; 32];
                 rand::thread_rng().fill_bytes(&mut aes_key);
-                let wrapped =
-                    public
-                        .encrypt(&mut rsa::rand_core::OsRng, Oaep::new::<Sha256>(), &aes_key)
-                        .unwrap();
+                let wrapped = public
+                    .encrypt(&mut rsa::rand_core::OsRng, Oaep::new::<Sha256>(), &aes_key)
+                    .unwrap();
                 let interaction = serde_json::json!({
                     "protocol": "dns",
                     "unique-id": format!("{label}.{POLL_DOMAIN}"),
@@ -198,7 +196,11 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
     assert_ne!(second.label, url.label);
 
     let fresh = state.oast.poll(project, session.session_id).await.unwrap();
-    assert_eq!(fresh.len(), 1, "first poll publishes the decryptable interaction");
+    assert_eq!(
+        fresh.len(),
+        1,
+        "first poll publishes the decryptable interaction"
+    );
     let hit = &fresh[0];
     assert_eq!(hit.protocol, "dns");
     // The provider trims the payload domain so full_id equals the minted
@@ -216,16 +218,31 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
     // Persistence + exact-label filtering.
     let page = state
         .oast
-        .interactions(project, session.session_id, Some(url.label.clone()), Some(50), Some(0))
+        .interactions(
+            project,
+            session.session_id,
+            Some(url.label.clone()),
+            Some(50),
+            Some(0),
+        )
         .await
         .unwrap();
     assert_eq!(page.total, 1);
     let page_other_label = state
         .oast
-        .interactions(project, session.session_id, Some(second.label.clone()), None, None)
+        .interactions(
+            project,
+            session.session_id,
+            Some(second.label.clone()),
+            None,
+            None,
+        )
         .await
         .unwrap();
-    assert_eq!(page_other_label.total, 0, "interactions belong to one label");
+    assert_eq!(
+        page_other_label.total, 0,
+        "interactions belong to one label"
+    );
 
     // Cross-project reads are rejected (project scoping).
     let other = state

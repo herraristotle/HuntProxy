@@ -84,8 +84,7 @@ impl PostbinProvider {
         let body = match &req.body {
             serde_json::Value::Null => String::new(),
             serde_json::Value::String(s) => s.clone(),
-            other => serde_json::to_string_pretty(other)
-                .unwrap_or_default(),
+            other => serde_json::to_string_pretty(other).unwrap_or_default(),
         };
         if !body.is_empty() {
             out.push_str("\n\n");
@@ -119,11 +118,7 @@ impl OastProvider for PostbinProvider {
             .map_err(|e| provider_error(format!("postbin register body: {e}")))?;
         let created: BinCreated = serde_json::from_slice(&bytes)
             .map_err(|e| provider_error(format!("postbin register json: {e}")))?;
-        let url = format!(
-            "{}/{}",
-            opts.server.trim_end_matches('/'),
-            created.bin_id
-        );
+        let url = format!("{}/{}", opts.server.trim_end_matches('/'), created.bin_id);
         Ok(ProviderRegistration {
             payload_url: url,
             unique_id: created.bin_id.clone(),
@@ -131,9 +126,7 @@ impl OastProvider for PostbinProvider {
             secret: None,
             rsa_private_key_pem: None,
             rsa_public_key_pem: None,
-            provider_meta: Some(
-                serde_json::json!({ "binId": created.bin_id }).to_string(),
-            ),
+            provider_meta: Some(serde_json::json!({ "binId": created.bin_id }).to_string()),
             first_label: created.bin_id,
         })
     }
@@ -144,10 +137,7 @@ impl OastProvider for PostbinProvider {
 
     async fn poll(&self, session: &OastSessionRow) -> DomainResult<Vec<Interaction>> {
         let bin_id = Self::bin_id(session)?;
-        let url = Self::url(
-            &session.server,
-            &format!("api/bin/{bin_id}/req/shift"),
-        );
+        let url = Self::url(&session.server, &format!("api/bin/{bin_id}/req/shift"));
         let response = self
             .http
             .get(&url)

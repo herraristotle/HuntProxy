@@ -509,7 +509,10 @@ mod tests {
             .unwrap()
         };
         expand_generators(&mut explicit, 100).unwrap();
-        assert_eq!(explicit.wordlists[1], vec![OAST_PLACEHOLDER, OAST_PLACEHOLDER]);
+        assert_eq!(
+            explicit.wordlists[1],
+            vec![OAST_PLACEHOLDER, OAST_PLACEHOLDER]
+        );
 
         // Bounds respected: requesting more slots than the budget is loud.
         let mut bounded = FuzzTemplate {

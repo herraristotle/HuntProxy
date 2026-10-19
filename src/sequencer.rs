@@ -79,7 +79,11 @@ pub fn extract_tokens_from_response(
         if name.eq_ignore_ascii_case("set-cookie") {
             if let Some((cookie_name, cookie_value)) = value.split_once('=') {
                 let val = cookie_value.split(';').next().unwrap_or(cookie_value);
-                if val.len() >= 16 && val.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+                if val.len() >= 16
+                    && val
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                {
                     tokens.push((
                         cookie_name.trim().to_string(),
                         val.to_string(),
@@ -97,11 +101,7 @@ pub fn extract_tokens_from_response(
                 if let Some(token) = caps.get(1) {
                     let val = token.as_str();
                     if val.len() >= 16 {
-                        tokens.push((
-                            "extracted".to_string(),
-                            val.to_string(),
-                            "body".to_string(),
-                        ));
+                        tokens.push(("extracted".to_string(), val.to_string(), "body".to_string()));
                     }
                 }
             }
@@ -358,7 +358,10 @@ pub fn analyze_tokens(samples: &[TokenSample]) -> DomainResult<SequencerAnalysis
         issues.push("Non-uniform 4-bit pattern distribution".to_string());
     }
     if entropy < 3.5 {
-        issues.push(format!("Low entropy: {:.2} bits/byte (expect >3.5)", entropy));
+        issues.push(format!(
+            "Low entropy: {:.2} bits/byte (expect >3.5)",
+            entropy
+        ));
     }
 
     Ok(SequencerAnalysis {
@@ -377,9 +380,10 @@ mod tests {
 
     #[test]
     fn test_extract_tokens() {
-        let headers = vec![
-            ("Set-Cookie".to_string(), "session=abc123def456; Path=/".to_string()),
-        ];
+        let headers = vec![(
+            "Set-Cookie".to_string(),
+            "session=abc123def456; Path=/".to_string(),
+        )];
         let body = r#"{"token":"xyz789abc123def456"}"#;
 
         let tokens = extract_tokens_from_response(&headers, Some(body));

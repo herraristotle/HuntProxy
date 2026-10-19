@@ -1,7 +1,7 @@
 //! Mainline interactsh protocol provider (self-hosted server).
 
 use super::{
-    provider_error, protocol_error, Interaction, OastProvider, ProviderRegistration,
+    protocol_error, provider_error, Interaction, OastProvider, ProviderRegistration,
     RegisterOptions,
 };
 use crate::config::OastProviderKind;
@@ -108,7 +108,13 @@ impl InteractshProvider {
         out
     }
 
-    async fn post_json(&self, url: &str, token: &str, body: &[u8], what: &str) -> DomainResult<String> {
+    async fn post_json(
+        &self,
+        url: &str,
+        token: &str,
+        body: &[u8],
+        what: &str,
+    ) -> DomainResult<String> {
         let response = self
             .auth_header(
                 self.http
@@ -141,7 +147,8 @@ impl InteractshProvider {
         }
         if parsed.message != "registration successful" {
             return Err(protocol_error(format!(
-                "register rejected: {}", parsed.message
+                "register rejected: {}",
+                parsed.message
             )));
         }
         Ok(())
@@ -186,11 +193,10 @@ impl OastProvider for InteractshProvider {
     async fn register(&self, opts: &RegisterOptions) -> DomainResult<ProviderRegistration> {
         // RSA-2048 keygen is 100ms+ of CPU; keep it off the async worker
         // threads (house rule: no blocking calls inside async fns).
-        let (private_pem, public_b64) = tokio::task::spawn_blocking(|| {
-            helpers::generate_rsa_keypair()
-        })
-        .await
-        .map_err(|e| provider_error(format!("interactsh keygen join: {e}")))??;
+        let (private_pem, public_b64) =
+            tokio::task::spawn_blocking(|| helpers::generate_rsa_keypair())
+                .await
+                .map_err(|e| provider_error(format!("interactsh keygen join: {e}")))??;
         let correlation_id = helpers::anonymous_correlation_id();
         let secret = uuid::Uuid::new_v4().to_string();
         let first_label = helpers::mint_label(&correlation_id);

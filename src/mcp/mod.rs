@@ -6,8 +6,8 @@ use crate::codec::{apply_pipeline, Transform};
 use crate::config::Config;
 use crate::domain::*;
 use crate::fuzzer::FuzzTemplate;
-use crate::oast::{load_oast_job_context, OastJobContext};
 use crate::history::{parse_text_query, query_error, HISTORY_QUERY_SYNTAX};
+use crate::oast::{load_oast_job_context, OastJobContext};
 use crate::policy::{is_sensitive_header, PresentationOptions};
 use crate::storage::CreateCaptureSession;
 use base64::Engine as _;
@@ -1935,8 +1935,10 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
             let action = args.get("action").and_then(Value::as_str).unwrap_or("list");
             match action {
                 "create" => {
-                    let purpose =
-                        args.get("purpose").and_then(Value::as_str).map(str::to_string);
+                    let purpose = args
+                        .get("purpose")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
                     let watch = args.get("watch").and_then(Value::as_bool).unwrap_or(true);
                     let provider_id = args.get("provider_id").and_then(Value::as_i64);
                     Ok(json!(
@@ -1952,7 +1954,12 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         .and_then(Value::as_i64)
                         .ok_or_else(|| DomainError::invalid("session_id required"))?;
                     let case_index = args.get("case_index").and_then(Value::as_i64);
-                    Ok(json!(state.oast.new_url(project_id, session_id, case_index).await?))
+                    Ok(json!(
+                        state
+                            .oast
+                            .new_url(project_id, session_id, case_index)
+                            .await?
+                    ))
                 }
                 "list" => Ok(json!({ "sessions": state.oast.list(project_id).await? })),
                 "poll" => {
@@ -1969,8 +1976,10 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         .get("session_id")
                         .and_then(Value::as_i64)
                         .ok_or_else(|| DomainError::invalid("session_id required"))?;
-                    let label =
-                        args.get("label").and_then(Value::as_str).map(str::to_string);
+                    let label = args
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
                     let limit = args.get("limit").and_then(Value::as_i64);
                     let offset = args.get("offset").and_then(Value::as_i64);
                     Ok(json!(
@@ -2323,7 +2332,9 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 .collect();
 
             if exchange_ids.len() < 10 {
-                return Err(DomainError::invalid("need at least 10 exchange_ids for analysis"));
+                return Err(DomainError::invalid(
+                    "need at least 10 exchange_ids for analysis",
+                ));
             }
 
             // Extract tokens from each exchange
@@ -2341,8 +2352,8 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
 
                 if let Ok(row) = row {
                     let headers_json: String = row.get(0)?;
-                    let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
-                        .unwrap_or_default();
+                    let headers: Vec<(String, String)> =
+                        serde_json::from_str(&headers_json).unwrap_or_default();
 
                     let body: Option<Vec<u8>> = row.get(1).ok();
                     let decoded_body: Option<Vec<u8>> = row.get(2).ok();
@@ -2414,7 +2425,10 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
             ];
 
             for (name, desc, category) in tools {
-                if query.is_empty() || name.contains(query) || desc.to_lowercase().contains(&query.to_lowercase()) {
+                if query.is_empty()
+                    || name.contains(query)
+                    || desc.to_lowercase().contains(&query.to_lowercase())
+                {
                     commands.push(json!({
                         "type": "tool",
                         "name": name,
@@ -2495,7 +2509,9 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 .ok_or_else(|| DomainError::invalid("mode required"))?;
 
             if requests.len() < 2 {
-                return Err(DomainError::invalid("need at least 2 requests for race testing"));
+                return Err(DomainError::invalid(
+                    "need at least 2 requests for race testing",
+                ));
             }
 
             let mut results = Vec::new();
@@ -2513,7 +2529,8 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         let delay_ms = req.get("delay_ms").and_then(Value::as_i64).unwrap_or(0);
 
                         if delay_ms > 0 {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms as u64)).await;
+                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms as u64))
+                                .await;
                         }
 
                         let start = std::time::Instant::now();
@@ -2534,10 +2551,12 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         let headers_json: String = row.get(2)?;
                         let body: Option<Vec<u8>> = row.get(3).ok();
 
-                        let headers: Vec<(String, String)> = serde_json::from_str(&headers_json).unwrap_or_default();
+                        let headers: Vec<(String, String)> =
+                            serde_json::from_str(&headers_json).unwrap_or_default();
 
                         // Extract host for URL
-                        let host = headers.iter()
+                        let host = headers
+                            .iter()
                             .find(|(k, _)| k.eq_ignore_ascii_case("host"))
                             .map(|(_, v)| v.as_str())
                             .unwrap_or("localhost");
@@ -2552,7 +2571,14 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
 
                         let result = state
                             .reply
-                            .send(project_id, None, None, &draft, crate::reply::ProtocolPreference::Auto, 0)
+                            .send(
+                                project_id,
+                                None,
+                                None,
+                                &draft,
+                                crate::reply::ProtocolPreference::Auto,
+                                0,
+                            )
                             .await?;
 
                         let elapsed = start.elapsed();
@@ -2566,8 +2592,12 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                     }
                 }
                 "single_packet_attack" | "last_byte_sync" => {
-                    let pause_byte = args.get("pause_byte").and_then(Value::as_i64).unwrap_or(100) as usize;
-                    let pause_ms = args.get("pause_ms").and_then(Value::as_i64).unwrap_or(10) as u64;
+                    let pause_byte = args
+                        .get("pause_byte")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(100) as usize;
+                    let pause_ms =
+                        args.get("pause_ms").and_then(Value::as_i64).unwrap_or(10) as u64;
 
                     // For now, simplified: send all requests with split writes
                     for req in requests {
@@ -2592,8 +2622,10 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         let target: String = row.get(1)?;
                         let headers_json: String = row.get(2)?;
 
-                        let headers: Vec<(String, String)> = serde_json::from_str(&headers_json).unwrap_or_default();
-                        let host = headers.iter()
+                        let headers: Vec<(String, String)> =
+                            serde_json::from_str(&headers_json).unwrap_or_default();
+                        let host = headers
+                            .iter()
                             .find(|(k, _)| k.eq_ignore_ascii_case("host"))
                             .map(|(_, v)| v.as_str())
                             .unwrap_or("localhost");
@@ -2618,7 +2650,11 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         }));
                     }
                 }
-                _ => return Err(DomainError::invalid("mode must be sequential, single_packet_attack, or last_byte_sync")),
+                _ => {
+                    return Err(DomainError::invalid(
+                        "mode must be sequential, single_packet_attack, or last_byte_sync",
+                    ))
+                }
             }
 
             Ok(json!({
@@ -2681,11 +2717,12 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 .await?;
 
             // Parse events
-            let events: Vec<crate::dom_monitor::DOMSinkEvent> = if let Some(result_value) = result.get("result") {
-                serde_json::from_value(result_value.clone()).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
+            let events: Vec<crate::dom_monitor::DOMSinkEvent> =
+                if let Some(result_value) = result.get("result") {
+                    serde_json::from_value(result_value.clone()).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
 
             // Analyze for XSS
             let findings = crate::dom_monitor::analyze_dom_events(&events);
@@ -3109,8 +3146,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         .get("job_id")
                         .and_then(|v| v.as_i64())
                         .ok_or_else(|| DomainError::invalid("job_id required"))?;
-                    let mut job =
-                        json!(state.fuzzer.get(project_id, FuzzJobId(jid)).await?);
+                    let mut job = json!(state.fuzzer.get(project_id, FuzzJobId(jid)).await?);
                     if let Some(context) =
                         load_oast_job_context(&state, project_id, FuzzJobId(jid)).await?
                     {
@@ -3144,8 +3180,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         .fuzzer
                         .list_cases(project_id, FuzzJobId(jid), limit, before)
                         .await?;
-                    let context =
-                        load_oast_job_context(&state, project_id, FuzzJobId(jid)).await?;
+                    let context = load_oast_job_context(&state, project_id, FuzzJobId(jid)).await?;
                     let cases = cases
                         .into_iter()
                         .map(|case| {
@@ -3153,8 +3188,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                                 serde_json::to_value(&case).unwrap_or_else(|_| json!({}));
                             if let Some(context) = &context {
                                 value["oast_session_id"] = json!(context.session_id);
-                                value["oast_label"] =
-                                    json!(context.labels.get(&case.case_index));
+                                value["oast_label"] = json!(context.labels.get(&case.case_index));
                             }
                             value
                         })
@@ -3226,15 +3260,15 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         .get("job_id")
                         .and_then(Value::as_i64)
                         .ok_or_else(|| DomainError::invalid("job_id required"))?;
-                    let context =
-                        load_oast_job_context(&state, project_id, FuzzJobId(jid))
-                            .await?
-                            .ok_or_else(|| {
-                                DomainError::invalid("fuzz job has no oast session")
-                            })?;
+                    let context = load_oast_job_context(&state, project_id, FuzzJobId(jid))
+                        .await?
+                        .ok_or_else(|| DomainError::invalid("fuzz job has no oast session"))?;
                     // Persist fresh interactions first, then group the full
                     // stored set (the background poller may have seen some).
-                    state.oast.poll(project_id.get(), context.session_id).await?;
+                    state
+                        .oast
+                        .poll(project_id.get(), context.session_id)
+                        .await?;
                     let limit = args.get("limit").and_then(Value::as_i64).unwrap_or(500);
                     let page = state
                         .oast

@@ -84,11 +84,7 @@ impl OastProvider for WebhooksiteProvider {
             .map_err(|e| provider_error(format!("webhook.site register body: {e}")))?;
         let created: TokenCreated = serde_json::from_slice(&bytes)
             .map_err(|e| provider_error(format!("webhook.site register json: {e}")))?;
-        let url = format!(
-            "{}/{}",
-            opts.server.trim_end_matches('/'),
-            created.uuid
-        );
+        let url = format!("{}/{}", opts.server.trim_end_matches('/'), created.uuid);
         Ok(ProviderRegistration {
             payload_url: url,
             unique_id: created.uuid.clone(),
@@ -96,9 +92,7 @@ impl OastProvider for WebhooksiteProvider {
             secret: None,
             rsa_private_key_pem: None,
             rsa_public_key_pem: None,
-            provider_meta: Some(
-                serde_json::json!({ "tokenId": created.uuid }).to_string(),
-            ),
+            provider_meta: Some(serde_json::json!({ "tokenId": created.uuid }).to_string()),
             first_label: created.uuid,
         })
     }

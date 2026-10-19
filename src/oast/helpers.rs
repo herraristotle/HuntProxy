@@ -91,9 +91,7 @@ pub(crate) fn generate_rsa_keypair() -> DomainResult<(String, String)> {
         .to_public_key_der()
         .map_err(|e| internal_error(format!("rsa spki encode: {e}")))?;
     let b64_lines = wrap_pem_body(&B64.encode(spki.as_ref()));
-    let pem = format!(
-        "-----BEGIN PUBLIC KEY-----\n{b64_lines}\n-----END PUBLIC KEY-----\n"
-    );
+    let pem = format!("-----BEGIN PUBLIC KEY-----\n{b64_lines}\n-----END PUBLIC KEY-----\n");
     Ok((private_pem, B64.encode(pem)))
 }
 
@@ -156,7 +154,9 @@ mod tests {
     fn correlation_id_is_20_chars_of_xid_alphabet() {
         let id = anonymous_correlation_id();
         assert_eq!(id.len(), CORRELATION_ID_LEN);
-        assert!(id.chars().all(|c| c.is_ascii_digit() || ('a'..='v').contains(&c)));
+        assert!(id
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='v').contains(&c)));
         // Distinct on consecutive calls.
         assert_ne!(anonymous_correlation_id(), id);
     }
@@ -180,9 +180,7 @@ mod tests {
     fn nonce_and_label_shapes_match_server_validator() {
         let nonce = mint_nonce();
         assert_eq!(nonce.len(), NONCE_LEN);
-        assert!(nonce
-            .chars()
-            .all(|c| ZBASE32_ALPHABET.contains(&(c as u8))));
+        assert!(nonce.chars().all(|c| ZBASE32_ALPHABET.contains(&(c as u8))));
         let cid = anonymous_correlation_id();
         let label = mint_label(&cid);
         assert_eq!(label.len(), CORRELATION_ID_LEN + NONCE_LEN);
@@ -190,7 +188,10 @@ mod tests {
             .chars()
             .take(CORRELATION_ID_LEN)
             .all(|c| XID_ALPHABET.contains(&(c as u8))));
-        assert!(label.chars().skip(CORRELATION_ID_LEN).all(|c| ZBASE32_ALPHABET.contains(&(c as u8))));
+        assert!(label
+            .chars()
+            .skip(CORRELATION_ID_LEN)
+            .all(|c| ZBASE32_ALPHABET.contains(&(c as u8))));
     }
 
     #[test]
@@ -207,7 +208,10 @@ mod tests {
         let der = B64.decode(b64_body).unwrap();
         let public = RsaPublicKey::from_public_key_der(&der).unwrap();
         let private = RsaPrivateKey::from_pkcs8_pem(&private_pem).unwrap();
-        assert_eq!(RsaPublicKey::from(&private).to_public_key_der().unwrap(), public.to_public_key_der().unwrap());
+        assert_eq!(
+            RsaPublicKey::from(&private).to_public_key_der().unwrap(),
+            public.to_public_key_der().unwrap()
+        );
     }
 
     #[test]
@@ -219,14 +223,13 @@ mod tests {
         let mut aes_key = [7u8; 32];
         rand::thread_rng().fill_bytes(&mut aes_key);
         let wrapped = public
-            .encrypt(
-                &mut OsRng,
-                Oaep::new::<Sha256>(),
-                &aes_key,
-            )
+            .encrypt(&mut OsRng, Oaep::new::<Sha256>(), &aes_key)
             .unwrap();
         let unwrapped = unwrap_aes_key(
-            private.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF).unwrap().as_ref(),
+            private
+                .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+                .unwrap()
+                .as_ref(),
             &B64.encode(wrapped),
         )
         .unwrap();
@@ -236,7 +239,10 @@ mod tests {
         let mut iv = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut iv);
         let plaintext = b"{\"protocol\":\"http\",\"full-id\":\"abc\"}";
-        let mut cipher = Aes256Ctr::new(GenericArray::from_slice(&aes_key), GenericArray::from_slice(&iv));
+        let mut cipher = Aes256Ctr::new(
+            GenericArray::from_slice(&aes_key),
+            GenericArray::from_slice(&iv),
+        );
         let mut ciphertext = plaintext.to_vec();
         cipher.apply_keystream(&mut ciphertext);
 

@@ -68,7 +68,9 @@ async fn postbin_register_and_shift_poll() {
         .mount(&server)
         .await;
 
-    let provider = PostbinProvider { http: http_client() };
+    let provider = PostbinProvider {
+        http: http_client(),
+    };
     assert_eq!(provider.kind(), OastProviderKind::Postbin);
 
     let reg = provider.register(&opts(&server.uri())).await.unwrap();
@@ -123,7 +125,9 @@ async fn webhooksite_register_and_list_poll() {
         .mount(&server)
         .await;
 
-    let provider = WebhooksiteProvider { http: http_client() };
+    let provider = WebhooksiteProvider {
+        http: http_client(),
+    };
     let reg = provider.register(&opts(&server.uri())).await.unwrap();
     assert_eq!(reg.unique_id, "tok-9");
     assert_eq!(reg.payload_url, format!("{}/tok-9", server.uri()));
@@ -134,7 +138,10 @@ async fn webhooksite_register_and_list_poll() {
     assert_eq!(interactions.len(), 1);
     assert_eq!(interactions[0].unique_id, "req-1");
     assert_eq!(interactions[0].remote_address, "203.0.113.5");
-    assert_eq!(interactions[0].full_id, "https://webhook.site/tok-9?u=req-1");
+    assert_eq!(
+        interactions[0].full_id,
+        "https://webhook.site/tok-9?u=req-1"
+    );
     assert_eq!(interactions[0].timestamp, "2026-10-11T00:00:01.000Z");
 }
 
@@ -188,8 +195,9 @@ async fn custom_accepts_bare_array_without_token() {
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!([{"id": "x", "timestamp": "2026-01-02T03:04:05Z"}])),
+            ResponseTemplate::new(200).set_body_json(
+                serde_json::json!([{"id": "x", "timestamp": "2026-01-02T03:04:05Z"}]),
+            ),
         )
         .mount(&server)
         .await;
@@ -218,7 +226,9 @@ async fn interactsh_register_sends_mainline_shape_and_auth_header() {
         .mount(&server)
         .await;
 
-    let provider = InteractshProvider { http: http_client() };
+    let provider = InteractshProvider {
+        http: http_client(),
+    };
     let reg = provider
         .register(&RegisterOptions {
             server: server.uri(),
@@ -231,7 +241,9 @@ async fn interactsh_register_sends_mainline_shape_and_auth_header() {
     // Correlation id: 20 chars of the xid alphabet.
     let cid = reg.correlation_id.as_deref().unwrap();
     assert_eq!(cid.len(), 20);
-    assert!(cid.chars().all(|c| c.is_ascii_digit() || ('a'..='v').contains(&c)));
+    assert!(cid
+        .chars()
+        .all(|c| c.is_ascii_digit() || ('a'..='v').contains(&c)));
     // Secret is a UUID v4 string.
     assert_eq!(
         reg.secret.as_deref().unwrap().len(),
@@ -248,10 +260,7 @@ async fn interactsh_register_sends_mainline_shape_and_auth_header() {
     // First payload URL = label + configured domain.
     assert_eq!(reg.first_label.len(), 33);
     assert!(reg.payload_url.ends_with(".oast.example.com"));
-    assert_eq!(
-        reg.payload_url.len(),
-        33 + ".oast.example.com".len()
-    );
+    assert_eq!(reg.payload_url.len(), 33 + ".oast.example.com".len());
 
     // Empty poll data → no interactions, no decryption attempted. The mock
     // asserts the exact `id`/`secret` query pair produced by register.
@@ -259,9 +268,7 @@ async fn interactsh_register_sends_mainline_shape_and_auth_header() {
         .and(path("/poll"))
         .and(query_param("id", cid))
         .and(query_param("secret", reg.secret.as_deref().unwrap()))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})))
         .expect(1)
         .mount(&server)
         .await;
@@ -276,7 +283,9 @@ async fn interactsh_register_sends_mainline_shape_and_auth_header() {
 
 #[tokio::test]
 async fn interactsh_new_url_mints_distinct_labels_on_one_session() {
-    let provider = InteractshProvider { http: http_client() };
+    let provider = InteractshProvider {
+        http: http_client(),
+    };
     let mut row = session("interactsh", "https://oast.example.com");
     row.correlation_id = Some("abcdefghij0123456789".into());
     row.domain = Some("oast.example.com".into());

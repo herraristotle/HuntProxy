@@ -1,12 +1,12 @@
 //! Integration tests for new MCP tools
 //! Run with: cargo test --test mcp_integration -- --test-threads=1
 
-use huntproxy::storage::Db;
+use huntproxy::dom_monitor::{analyze_dom_events, DOMSinkEvent};
 use huntproxy::domain::ProjectId;
 use huntproxy::fingerprint::fingerprint_exchange;
-use huntproxy::inspector::{inspect_request, build_request};
-use huntproxy::sequencer::{extract_tokens_from_response, analyze_tokens, TokenSample};
-use huntproxy::dom_monitor::{analyze_dom_events, DOMSinkEvent};
+use huntproxy::inspector::{build_request, inspect_request};
+use huntproxy::sequencer::{analyze_tokens, extract_tokens_from_response, TokenSample};
+use huntproxy::storage::Db;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -54,10 +54,12 @@ async fn test_inspector_round_trip() {
     // Modify
     let mut modified = parsed.clone();
     modified.cookies[0].value = "new_session_token".to_string();
-    modified.query_params.push(huntproxy::inspector::QueryParam {
-        name: "debug".to_string(),
-        value: "true".to_string(),
-    });
+    modified
+        .query_params
+        .push(huntproxy::inspector::QueryParam {
+            name: "debug".to_string(),
+            value: "true".to_string(),
+        });
 
     // Rebuild
     let rebuilt = build_request(&modified).unwrap();
@@ -70,14 +72,16 @@ async fn test_inspector_round_trip() {
 #[tokio::test]
 async fn test_sequencer_weak_tokens() {
     // Generate predictable tokens
-    let samples: Vec<TokenSample> = (0..20).map(|i| {
-        TokenSample {
-            exchange_id: i,
-            value: format!("token{:016x}", i * 1000), // Predictable pattern
-            source: "cookie".to_string(),
-            name: "session".to_string(),
-        }
-    }).collect();
+    let samples: Vec<TokenSample> = (0..20)
+        .map(|i| {
+            TokenSample {
+                exchange_id: i,
+                value: format!("token{:016x}", i * 1000), // Predictable pattern
+                source: "cookie".to_string(),
+                name: "session".to_string(),
+            }
+        })
+        .collect();
 
     let analysis = analyze_tokens(&samples).unwrap();
 
@@ -110,14 +114,16 @@ async fn test_sequencer_strong_tokens() {
         "f6a3e9c2b7d51480",
         "4b8e1a6f9c2d7305",
         "c9d5a2f7e4b18360",
-    ].into_iter().enumerate().map(|(i, val)| {
-        TokenSample {
-            exchange_id: i as i64,
-            value: val.to_string(),
-            source: "cookie".to_string(),
-            name: "session".to_string(),
-        }
-    }).collect();
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, val)| TokenSample {
+        exchange_id: i as i64,
+        value: val.to_string(),
+        source: "cookie".to_string(),
+        name: "session".to_string(),
+    })
+    .collect();
 
     let analysis = analyze_tokens(&samples).unwrap();
 
@@ -129,15 +135,23 @@ async fn test_sequencer_strong_tokens() {
 #[tokio::test]
 async fn test_token_extraction() {
     let headers = vec![
-        ("Set-Cookie".to_string(), "session=abc123def456ghi789; Path=/; HttpOnly".to_string()),
-        ("Set-Cookie".to_string(), "csrf=xyz789abc123def456; Path=/".to_string()),
+        (
+            "Set-Cookie".to_string(),
+            "session=abc123def456ghi789; Path=/; HttpOnly".to_string(),
+        ),
+        (
+            "Set-Cookie".to_string(),
+            "csrf=xyz789abc123def456; Path=/".to_string(),
+        ),
     ];
     let body = r#"{"token":"bearer_token_abc123def456ghi789","csrf":"csrf_token_xyz789"}"#;
 
     let tokens = extract_tokens_from_response(&headers, Some(body));
 
     assert!(tokens.len() >= 2); // At least session + csrf from cookies
-    assert!(tokens.iter().any(|(name, _, source)| name == "session" && source == "cookie"));
+    assert!(tokens
+        .iter()
+        .any(|(name, _, source)| name == "session" && source == "cookie"));
 }
 
 #[tokio::test]
@@ -169,22 +183,26 @@ async fn test_dom_monitor_xss_detection() {
     let findings = analyze_dom_events(&events);
 
     assert_eq!(findings.len(), 3);
-    assert!(findings.iter().any(|f| f.severity == "high" && f.description.contains("Event handler")));
-    assert!(findings.iter().any(|f| f.severity == "high" && f.description.contains("javascript: protocol")));
-    assert!(findings.iter().any(|f| f.severity == "medium" && f.description.contains("eval")));
+    assert!(findings
+        .iter()
+        .any(|f| f.severity == "high" && f.description.contains("Event handler")));
+    assert!(findings
+        .iter()
+        .any(|f| f.severity == "high" && f.description.contains("javascript: protocol")));
+    assert!(findings
+        .iter()
+        .any(|f| f.severity == "medium" && f.description.contains("eval")));
 }
 
 #[tokio::test]
 async fn test_dom_monitor_postmessage() {
-    let events = vec![
-        DOMSinkEvent {
-            sink_type: "postMessage".to_string(),
-            value: r#"{"message":"sensitive","targetOrigin":"*"}"#.to_string(),
-            stack_trace: None,
-            url: "https://target.com".to_string(),
-            timestamp: "2026-10-18T10:00:00Z".to_string(),
-        },
-    ];
+    let events = vec![DOMSinkEvent {
+        sink_type: "postMessage".to_string(),
+        value: r#"{"message":"sensitive","targetOrigin":"*"}"#.to_string(),
+        stack_trace: None,
+        url: "https://target.com".to_string(),
+        timestamp: "2026-10-18T10:00:00Z".to_string(),
+    }];
 
     let findings = analyze_dom_events(&events);
 
@@ -204,20 +222,18 @@ async fn test_command_palette_indexing() {
     ];
 
     let query = "fuzz";
-    let matches: Vec<_> = tools.iter()
-        .filter(|(name, desc)| {
-            name.contains(query) || desc.to_lowercase().contains(query)
-        })
+    let matches: Vec<_> = tools
+        .iter()
+        .filter(|(name, desc)| name.contains(query) || desc.to_lowercase().contains(query))
         .collect();
 
     // Should match nothing for "fuzz" (no fuzzer in new tools)
     assert_eq!(matches.len(), 0);
 
     let query = "dom";
-    let matches: Vec<_> = tools.iter()
-        .filter(|(name, desc)| {
-            name.contains(query) || desc.to_lowercase().contains(query)
-        })
+    let matches: Vec<_> = tools
+        .iter()
+        .filter(|(name, desc)| name.contains(query) || desc.to_lowercase().contains(query))
         .collect();
 
     assert_eq!(matches.len(), 1);
@@ -233,9 +249,9 @@ async fn test_race_pipeline_simulation() {
 
     // Sequential mode with delays
     let requests = vec![
-        ("req1", 0),   // No delay
-        ("req2", 10),  // 10ms delay
-        ("req3", 10),  // 10ms delay
+        ("req1", 0),  // No delay
+        ("req2", 10), // 10ms delay
+        ("req3", 10), // 10ms delay
     ];
 
     for (name, delay_ms) in requests {

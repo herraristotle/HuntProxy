@@ -232,11 +232,7 @@ impl Db {
         .await
     }
 
-    pub async fn touch_oast_session_polled(
-        &self,
-        session_id: i64,
-        at: &str,
-    ) -> DomainResult<()> {
+    pub async fn touch_oast_session_polled(&self, session_id: i64, at: &str) -> DomainResult<()> {
         let at = at.to_string();
         self.with_conn(move |conn| {
             conn.execute(
@@ -249,11 +245,7 @@ impl Db {
         .await
     }
 
-    pub async fn set_oast_session_status(
-        &self,
-        session_id: i64,
-        status: &str,
-    ) -> DomainResult<()> {
+    pub async fn set_oast_session_status(&self, session_id: i64, status: &str) -> DomainResult<()> {
         let status = status.to_string();
         self.with_conn(move |conn| {
             conn.execute(
@@ -360,7 +352,10 @@ impl Db {
                 )
                 .map_err(storage_error)?;
             let rows = stmt
-                .query_map(params![session_id, like, limit, offset], read_interaction_row)
+                .query_map(
+                    params![session_id, like, limit, offset],
+                    read_interaction_row,
+                )
                 .map_err(storage_error)?;
             let items = rows
                 .collect::<rusqlite::Result<Vec<_>>>()
@@ -692,9 +687,7 @@ fn read_session_row(row: &Row<'_>) -> rusqlite::Result<OastSessionRow> {
         watch: row.get::<_, i64>(12)? != 0,
         status: row.get(13)?,
         created_at: parse_time(&row.get::<_, String>(14)?),
-        last_polled_at: row
-            .get::<_, Option<String>>(15)?
-            .map(|s| parse_time(&s)),
+        last_polled_at: row.get::<_, Option<String>>(15)?.map(|s| parse_time(&s)),
         provider_token: row.get(16)?,
     })
 }
@@ -779,7 +772,10 @@ mod tests {
         assert_eq!(loaded.provider_kind, "interactsh");
         assert!(loaded.watch);
         assert_eq!(loaded.status, "active");
-        assert_eq!(loaded.correlation_id.as_deref(), Some("abcdefghij0123456789"));
+        assert_eq!(
+            loaded.correlation_id.as_deref(),
+            Some("abcdefghij0123456789")
+        );
 
         let err = db.get_oast_session(project + 99, id).await.unwrap_err();
         assert_eq!(err.code(), ErrorCode::NotFound);
@@ -863,9 +859,7 @@ mod tests {
         db.insert_oast_label(session, "cidlabelaaaa", Some(7))
             .await
             .unwrap();
-        let dup = db
-            .insert_oast_label(session, "cidlabelaaaa", Some(8))
-            .await;
+        let dup = db.insert_oast_label(session, "cidlabelaaaa", Some(8)).await;
         assert!(dup.is_err());
 
         let label = db

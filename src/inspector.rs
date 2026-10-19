@@ -47,7 +47,8 @@ pub fn parse_request(raw: &str) -> DomainResult<StructuredRequest> {
     let mut lines = raw.lines();
 
     // Parse request line
-    let request_line = lines.next()
+    let request_line = lines
+        .next()
         .ok_or_else(|| DomainError::invalid("empty request"))?;
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
@@ -164,7 +165,8 @@ pub fn build_request(req: &StructuredRequest) -> DomainResult<String> {
     let final_query = if req.query_params.is_empty() {
         String::new()
     } else {
-        let params: Vec<String> = req.query_params
+        let params: Vec<String> = req
+            .query_params
             .iter()
             .map(|p| {
                 format!(
@@ -178,7 +180,10 @@ pub fn build_request(req: &StructuredRequest) -> DomainResult<String> {
     };
 
     let path_part = url.path();
-    output.push_str(&format!("{} {}{} HTTP/1.1\r\n", req.method, path_part, final_query));
+    output.push_str(&format!(
+        "{} {}{} HTTP/1.1\r\n",
+        req.method, path_part, final_query
+    ));
 
     // Host header (ensure it exists)
     let mut has_host = false;
@@ -203,7 +208,8 @@ pub fn build_request(req: &StructuredRequest) -> DomainResult<String> {
 
     // Cookie header (rebuilt from cookies list)
     if !req.cookies.is_empty() {
-        let cookie_str: Vec<String> = req.cookies
+        let cookie_str: Vec<String> = req
+            .cookies
             .iter()
             .map(|c| format!("{}={}", c.name, c.value))
             .collect();
@@ -243,19 +249,15 @@ mod tests {
         let req = StructuredRequest {
             method: "POST".to_string(),
             url: "https://example.com/api/login".to_string(),
-            headers: vec![
-                Header {
-                    name: "Content-Type".to_string(),
-                    value: "application/json".to_string(),
-                },
-            ],
+            headers: vec![Header {
+                name: "Content-Type".to_string(),
+                value: "application/json".to_string(),
+            }],
             query_params: vec![],
-            cookies: vec![
-                Cookie {
-                    name: "csrf".to_string(),
-                    value: "token123".to_string(),
-                },
-            ],
+            cookies: vec![Cookie {
+                name: "csrf".to_string(),
+                value: "token123".to_string(),
+            }],
             body: Some(r#"{"user":"admin"}"#.to_string()),
         };
 
