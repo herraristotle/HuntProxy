@@ -254,10 +254,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/v1/projects/{id}/oast/{sid}/new_url",
             post(oast_new_url).layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)),
         )
-        .route(
-            "/api/v1/projects/{id}/oast/{sid}/poll",
-            post(oast_poll),
-        )
+        .route("/api/v1/projects/{id}/oast/{sid}/poll", post(oast_poll))
         .route(
             "/api/v1/projects/{id}/oast/{sid}/interactions",
             get(oast_interactions),
