@@ -235,7 +235,7 @@ async fn test_command_palette_indexing() {
         .collect();
 
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].0, &"dom_monitor_start");
+    assert_eq!(matches[0].0, "dom_monitor_start");
 }
 
 #[tokio::test]
