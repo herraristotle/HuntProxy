@@ -125,7 +125,10 @@ impl Db {
         let sql = sql.to_string();
         self.with_conn(move |c| {
             let mut stmt = c.prepare(&sql)?;
-            let row = stmt.query_row(rusqlite::params_from_iter(params), owned_row)?;
+            let n = stmt.column_count();
+            let row = stmt.query_row(rusqlite::params_from_iter(params), |row| {
+                owned_row(row, n)
+            })?;
             Ok(row)
         })
         .await
@@ -139,10 +142,11 @@ impl Db {
         let sql = sql.to_string();
         self.with_conn(move |c| {
             let mut stmt = c.prepare(&sql)?;
+            let n = stmt.column_count();
             let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
             let mut out = Vec::new();
             while let Some(row) = rows.next()? {
-                out.push(owned_row(row)?);
+                out.push(owned_row(row, n)?);
             }
             Ok(out)
         })
@@ -180,7 +184,7 @@ impl RowIndex for i64 {
 
 impl RowIndex for u32 {
     fn to_index(self, len: usize) -> Option<usize> {
-        (self as usize < len).then_some(self as usize)
+        ((self as usize) < len).then_some(self as usize)
     }
 }
 
@@ -189,12 +193,11 @@ impl OwnedRow {
         let i = idx
             .to_index(self.columns.len())
             .ok_or(rusqlite::Error::InvalidColumnIndex(self.columns.len()))?;
-        T::column_result((&self.columns[i]).into())
+        T::column_result((&self.columns[i]).into()).map_err(Into::into)
     }
 }
 
-fn owned_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OwnedRow> {
-    let n = row.column_count();
+fn owned_row(row: &rusqlite::Row<'_>, n: usize) -> rusqlite::Result<OwnedRow> {
     let mut columns = Vec::with_capacity(n);
     for i in 0..n {
         columns.push(row.get_ref(i)?.into());

@@ -2719,7 +2719,9 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 .data
                 .as_ref()
                 .and_then(|d| d.get("result"))
-                .map(|result_value| serde_json::from_value(result_value.clone()).unwrap_or_default())
+                .map(|result_value| {
+                    serde_json::from_value(result_value.clone()).unwrap_or_default()
+                })
                 .unwrap_or_default();
 
             // Analyze for XSS
