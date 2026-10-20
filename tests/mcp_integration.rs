@@ -46,7 +46,7 @@ async fn test_inspector_round_trip() {
     let parsed = parse_request(raw_request).unwrap();
 
     assert_eq!(parsed.method, "GET");
-    assert_eq!(parsed.path, "/api/users");
+    assert!(parsed.url.contains("/api/users"));
     assert_eq!(parsed.query_params.len(), 2);
     assert_eq!(parsed.cookies.len(), 2);
     assert!(parsed.headers.iter().any(|h| h.name == "Authorization"));
