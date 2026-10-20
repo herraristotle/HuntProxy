@@ -349,6 +349,20 @@ pub struct PluginJobView {
     pub error: Option<String>,
 }
 
+/// List-view summary of a plugin job with stringified state/phase,
+/// matching the MCP dashboard's filters.
+#[derive(Debug, Clone, Serialize)]
+pub struct PluginJobSummary {
+    pub id: Uuid,
+    pub project_id: ProjectId,
+    pub plugin_id: String,
+    pub action: String,
+    pub state: String,
+    pub phase: String,
+    pub progress: f64,
+    pub started_at: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct PluginJobRecord {
     id: Uuid,
@@ -1680,6 +1694,53 @@ impl PluginService {
             service.execute_job(job, plugin, action, input).await;
         });
         self.status(id)
+    }
+
+    pub async fn list_jobs(&self, project_id: ProjectId) -> DomainResult<Vec<PluginJobSummary>> {
+        let mut out = Vec::new();
+        for entry in self.jobs.iter() {
+            let view = entry.value().view.read().status();
+            if view.project_id != project_id {
+                continue;
+            }
+            let state = match view.phase {
+                PluginJobPhase::Queued => "queued".to_string(),
+                PluginJobPhase::Planning => "planning".to_string(),
+                PluginJobPhase::Executing => "running".to_string(),
+                PluginJobPhase::Analyzing | PluginJobPhase::Persisting => "aggregating".into(),
+                PluginJobPhase::Finished => match view.state {
+                    PluginJobState::Queued => "queued".into(),
+                    PluginJobState::Running => "running".into(),
+                    PluginJobState::Completed => "completed".into(),
+                    PluginJobState::Failed => "failed".into(),
+                    PluginJobState::Cancelled => "cancelled".into(),
+                },
+            };
+            let phase = match view.phase {
+                PluginJobPhase::Queued => "queued",
+                PluginJobPhase::Planning => "planning",
+                PluginJobPhase::Executing => "executing",
+                PluginJobPhase::Analyzing => "analyzing",
+                PluginJobPhase::Persisting => "persisting",
+                PluginJobPhase::Finished => "finished",
+            };
+            let progress = if view.operation_count == 0 {
+                0.0
+            } else {
+                view.completed_operations as f64 / view.operation_count as f64
+            };
+            out.push(PluginJobSummary {
+                id: view.id,
+                project_id: view.project_id,
+                plugin_id: view.plugin_id,
+                action: view.action,
+                state,
+                phase: phase.to_string(),
+                progress,
+                started_at: None,
+            });
+        }
+        Ok(out)
     }
 
     pub fn status(&self, id: Uuid) -> DomainResult<PluginJobView> {
@@ -3079,7 +3140,7 @@ impl PluginService {
                 {
                     Ok(profile) => profile,
                     Err(error) => {
-                        cleanup_rotation_gateways(helper, &credentials, &gateways).await;
+                        cleanup_rotation_gateways(&helper, &credentials, &gateways).await;
                         return Err(error);
                     }
                 };

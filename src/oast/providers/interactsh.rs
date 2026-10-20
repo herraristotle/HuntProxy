@@ -354,6 +354,7 @@ impl OastProvider for InteractshProvider {
             "interactsh deregister",
         )
         .await
+        .map(|_| ())
     }
 }
 

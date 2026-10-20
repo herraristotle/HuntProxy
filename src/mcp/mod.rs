@@ -1371,7 +1371,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                      FROM findings
                      WHERE project_id = ?
                      GROUP BY severity",
-                    rusqlite::params![project_id.get()],
+                    vec![project_id.get()],
                 )
                 .await?;
 
@@ -1391,7 +1391,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                      WHERE project_id = ?
                      ORDER BY id DESC
                      LIMIT 10",
-                    rusqlite::params![project_id.get()],
+                    vec![project_id.get()],
                 )
                 .await?;
 
@@ -1417,7 +1417,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                     "SELECT state, discovered, queued, completed
                      FROM crawler_state
                      WHERE project_id = ?",
-                    rusqlite::params![project_id.get()],
+                    vec![project_id.get()],
                 )
                 .await
                 .ok()
@@ -2245,7 +2245,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                     "SELECT resp_headers, resp_body, resp_decoded_body
                      FROM exchanges
                      WHERE project_id = ? AND id = ?",
-                    rusqlite::params![project_id.get(), exchange_id.get()],
+                    vec![project_id.get(), exchange_id.get()],
                 )
                 .await
                 .map_err(|_| DomainError::not_found("exchange not found"))?;
@@ -2286,7 +2286,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                     "SELECT req_method, req_target, req_headers, req_body
                      FROM exchanges
                      WHERE project_id = ? AND id = ?",
-                    rusqlite::params![project_id.get(), exchange_id.get()],
+                    vec![project_id.get(), exchange_id.get()],
                 )
                 .await
                 .map_err(|_| DomainError::not_found("exchange not found"))?;
@@ -2346,7 +2346,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         "SELECT resp_headers, resp_body, resp_decoded_body
                          FROM exchanges
                          WHERE project_id = ? AND id = ?",
-                        rusqlite::params![project_id.get(), exchange_id],
+                        vec![project_id.get(), exchange_id],
                     )
                     .await;
 
@@ -2447,7 +2447,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                      WHERE project_id = ?
                      ORDER BY id DESC
                      LIMIT 5",
-                    rusqlite::params![project_id.get()],
+                    vec![project_id.get()],
                 )
                 .await?;
 
@@ -2542,7 +2542,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                                 "SELECT req_method, req_target, req_headers, req_body
                                  FROM exchanges
                                  WHERE project_id = ? AND id = ?",
-                                rusqlite::params![project_id.get(), exchange_id.get()],
+                                vec![project_id.get(), exchange_id.get()],
                             )
                             .await?;
 
@@ -2563,7 +2563,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
 
                         let url = format!("https://{}{}", host, target);
 
-                        let draft = crate::domain::models::ReplyDraft {
+                        let draft = crate::domain::ReplyDraft {
                             method: Some(method),
                             url: Some(url),
                             ..Default::default()
@@ -2576,7 +2576,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                                 None,
                                 None,
                                 &draft,
-                                crate::domain::models::ProtocolPreference::Auto,
+                                crate::domain::ProtocolPreference::Auto,
                                 0,
                             )
                             .await?;
@@ -2587,7 +2587,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                             "exchange_id": exchange_id,
                             "status": result.status_code,
                             "duration_ms": elapsed.as_millis(),
-                            "response_size": result.preview.len(),
+                            "response_size": result.response_length,
                         }));
                     }
                 }
@@ -2614,7 +2614,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                                 "SELECT req_method, req_target, req_headers, req_body
                                  FROM exchanges
                                  WHERE project_id = ? AND id = ?",
-                                rusqlite::params![project_id.get(), exchange_id.get()],
+                                vec![project_id.get(), exchange_id.get()],
                             )
                             .await?;
 
@@ -2672,14 +2672,13 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
 
             // Inject DOM monitoring script via browser_action
             let action = json!({
-                "evaluate": {
-                    "expression": crate::dom_monitor::DOM_INSTRUMENTATION
-                }
+                "type": "evaluate",
+                "expression": crate::dom_monitor::DOM_INSTRUMENTATION
             });
 
-            let inject_result = state
+            let _inject_result = state
                 .browser
-                .execute_action(
+                .action(
                     project_id,
                     crate::domain::BrowserSessionId(session_id),
                     serde_json::from_value(action)?,
@@ -2702,27 +2701,26 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
 
             // Retrieve events from browser
             let action = json!({
-                "evaluate": {
-                    "expression": "window.__HUNTPROXY_GET_EVENTS__ ? window.__HUNTPROXY_GET_EVENTS__() : []"
-                }
+                "type": "evaluate",
+                "expression": "window.__HUNTPROXY_GET_EVENTS__ ? window.__HUNTPROXY_GET_EVENTS__() : []"
             });
 
             let result = state
                 .browser
-                .execute_action(
+                .action(
                     project_id,
                     crate::domain::BrowserSessionId(session_id),
                     serde_json::from_value(action)?,
                 )
                 .await?;
 
-            // Parse events
-            let events: Vec<crate::dom_monitor::DOMSinkEvent> =
-                if let Some(result_value) = result.get("result") {
-                    serde_json::from_value(result_value.clone()).unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
+            // Parse events: the evaluate result lives under data.result
+            let events: Vec<crate::dom_monitor::DOMSinkEvent> = result
+                .data
+                .as_ref()
+                .and_then(|d| d.get("result"))
+                .map(|result_value| serde_json::from_value(result_value.clone()).unwrap_or_default())
+                .unwrap_or_default();
 
             // Analyze for XSS
             let findings = crate::dom_monitor::analyze_dom_events(&events);

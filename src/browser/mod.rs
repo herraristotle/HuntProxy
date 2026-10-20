@@ -247,6 +247,9 @@ pub enum BrowserAction {
         for_what: String,
         value: String,
     },
+    Evaluate {
+        expression: String,
+    },
     Back,
     Forward,
     Close,

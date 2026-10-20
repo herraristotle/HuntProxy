@@ -15,7 +15,6 @@ mod ip_rotation;
 mod lifecycle;
 mod migrations;
 mod oast;
-mod passive_scan_alerts;
 mod projects;
 mod reply_store;
 mod sessions;
@@ -50,8 +49,6 @@ pub use fuzz_store::*;
 pub use ip_rotation::*;
 #[allow(unused_imports)]
 pub use oast::*;
-#[allow(unused_imports)]
-pub use passive_scan_alerts::*;
 #[allow(unused_imports)]
 pub use reply_store::*;
 #[allow(unused_imports)]

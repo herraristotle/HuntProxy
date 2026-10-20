@@ -115,6 +115,91 @@ impl Db {
     pub async fn schema_version(&self) -> DomainResult<i32> {
         self.with_conn(migrations::schema_version).await
     }
+
+    /// Run a query expected to return at most one row. Params are owned so
+    /// they can move into the pool's `'static` interaction closure.
+    pub async fn query_one<P>(&self, sql: &str, params: Vec<P>) -> DomainResult<OwnedRow>
+    where
+        P: rusqlite::types::ToSql + Send + 'static,
+    {
+        let sql = sql.to_string();
+        self.with_conn(move |c| {
+            let mut stmt = c.prepare(&sql)?;
+            let row = stmt.query_row(rusqlite::params_from_iter(params), owned_row)?;
+            Ok(row)
+        })
+        .await
+    }
+
+    /// Run a query and collect every row.
+    pub async fn query_all<P>(&self, sql: &str, params: Vec<P>) -> DomainResult<Vec<OwnedRow>>
+    where
+        P: rusqlite::types::ToSql + Send + 'static,
+    {
+        let sql = sql.to_string();
+        self.with_conn(move |c| {
+            let mut stmt = c.prepare(&sql)?;
+            let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+            let mut out = Vec::new();
+            while let Some(row) = rows.next()? {
+                out.push(owned_row(row)?);
+            }
+            Ok(out)
+        })
+        .await
+    }
+}
+
+/// Owned copy of a result row, decoupled from statement lifetimes.
+pub struct OwnedRow {
+    columns: Vec<rusqlite::types::Value>,
+}
+
+/// Column index accepted by [`OwnedRow::get`], mirroring `rusqlite::Row`.
+pub trait RowIndex {
+    fn to_index(self, len: usize) -> Option<usize>;
+}
+
+impl RowIndex for usize {
+    fn to_index(self, len: usize) -> Option<usize> {
+        (self < len).then_some(self)
+    }
+}
+
+impl RowIndex for i32 {
+    fn to_index(self, len: usize) -> Option<usize> {
+        usize::try_from(self).ok().filter(|i| *i < len)
+    }
+}
+
+impl RowIndex for i64 {
+    fn to_index(self, len: usize) -> Option<usize> {
+        usize::try_from(self).ok().filter(|i| *i < len)
+    }
+}
+
+impl RowIndex for u32 {
+    fn to_index(self, len: usize) -> Option<usize> {
+        (self as usize < len).then_some(self as usize)
+    }
+}
+
+impl OwnedRow {
+    pub fn get<I: RowIndex, T: rusqlite::types::FromSql>(&self, idx: I) -> rusqlite::Result<T> {
+        let i = idx
+            .to_index(self.columns.len())
+            .ok_or(rusqlite::Error::InvalidColumnIndex(self.columns.len()))?;
+        T::column_result((&self.columns[i]).into())
+    }
+}
+
+fn owned_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OwnedRow> {
+    let n = row.column_count();
+    let mut columns = Vec::with_capacity(n);
+    for i in 0..n {
+        columns.push(row.get_ref(i)?.into());
+    }
+    Ok(OwnedRow { columns })
 }
 
 fn backup_before_migration(

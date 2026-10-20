@@ -523,7 +523,7 @@ fn compile_header_term(
     let condition = match positive_op {
         "exists" => "1=1".to_string(),
         "eq" => {
-            binds.push(value_as_string(value)?);
+            binds.push(value_as_string(field, value)?);
             let n = binds.len();
             if subfield.is_some() {
                 format!("CAST(mh.value AS TEXT)=?{n}")
@@ -532,7 +532,7 @@ fn compile_header_term(
             }
         }
         "contains" | "starts_with" | "ends_with" => {
-            let raw = escape_like(&value_as_string(value)?);
+            let raw = escape_like(&value_as_string(field, value)?);
             let pattern = match positive_op {
                 "contains" => format!("%{raw}%"),
                 "starts_with" => format!("{raw}%"),
@@ -558,7 +558,7 @@ fn compile_header_term(
             }
             let mut placeholders = Vec::with_capacity(arr.len());
             for v in arr {
-                binds.push(value_as_string(v)?);
+                binds.push(value_as_string(field, v)?);
                 placeholders.push(format!("?{}", binds.len()));
             }
             let list = placeholders.join(",");
@@ -569,7 +569,7 @@ fn compile_header_term(
             }
         }
         "regex" => {
-            let pattern = value_as_string(value)?;
+            let pattern = value_as_string(field, value)?;
             validate_regex_pattern(&pattern)?;
             binds.push(pattern);
             let n = binds.len();

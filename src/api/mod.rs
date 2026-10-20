@@ -2710,7 +2710,7 @@ async fn fuzz_oast_interactions(
             None => unmapped.push(value),
         }
     }
-    serde_json::json!({
+    Json(serde_json::json!({
         "session_id": context.session_id,
         "total": page.total,
         "by_case": by_case,
@@ -2722,7 +2722,7 @@ async fn fuzz_oast_interactions(
         } else {
             serde_json::json!("single-URL provider: every case shares one payload url; interactions cannot be mapped to cases")
         },
-    })
+    }))
     .into_response()
 }
 

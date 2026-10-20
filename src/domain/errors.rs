@@ -177,6 +177,10 @@ impl DomainError {
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self::new(ErrorCode::Conflict, msg)
     }
+
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self::new(ErrorCode::Internal, msg)
+    }
 }
 
 impl From<std::str::Utf8Error> for DomainError {
@@ -188,6 +192,12 @@ impl From<std::str::Utf8Error> for DomainError {
 impl From<serde_json::Error> for DomainError {
     fn from(err: serde_json::Error) -> Self {
         Self::invalid(format!("JSON error: {}", err))
+    }
+}
+
+impl From<rusqlite::Error> for DomainError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::new(ErrorCode::StorageError, err.to_string())
     }
 }
 

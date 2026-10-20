@@ -11,7 +11,7 @@ use ctr::cipher::{KeyIvInit, StreamCipher};
 use rand::RngCore;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
-use sha2::Sha256;
+use sha2_11::Sha256;
 
 type Aes256Ctr = ctr::Ctr128BE<Aes256>;
 

@@ -1305,6 +1305,10 @@ async function executeAction(session, action = {}) {
         message: "wait completed",
         data: await performWait(page, action.for_what, action.value),
       };
+    case "evaluate": {
+      const value = await page.evaluate(action.expression);
+      return { message: "expression evaluated", data: { result: value } };
+    }
     case "back":
       await page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 });
       await reconcileCurrentOriginStorage(session);

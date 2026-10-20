@@ -9,6 +9,7 @@ use crate::config::OastProviderKind;
 use crate::domain::DomainResult;
 use crate::storage::OastSessionRow;
 use serde::Deserialize;
+use sha2::Digest;
 use std::sync::Arc;
 
 pub struct CustomProvider {
