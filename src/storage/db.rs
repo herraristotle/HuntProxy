@@ -126,9 +126,8 @@ impl Db {
         self.with_conn(move |c| {
             let mut stmt = c.prepare(&sql)?;
             let n = stmt.column_count();
-            let row = stmt.query_row(rusqlite::params_from_iter(params), |row| {
-                owned_row(row, n)
-            })?;
+            let row =
+                stmt.query_row(rusqlite::params_from_iter(params), |row| owned_row(row, n))?;
             Ok(row)
         })
         .await

@@ -45,7 +45,10 @@ pub fn parse_sitemap(base_url: &str, xml_content: &str) -> Vec<SitemapUrl> {
         let resolved = if loc.starts_with("http://") || loc.starts_with("https://") {
             loc.to_string()
         } else {
-            base.join(loc).ok().map(|u| u.to_string()).unwrap_or_else(|| loc.to_string())
+            base.join(loc)
+                .ok()
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| loc.to_string())
         };
 
         // Deduplicate
@@ -101,7 +104,10 @@ pub fn parse_sitemap_index(base_url: &str, xml_content: &str) -> Vec<String> {
                 let resolved = if loc.starts_with("http://") || loc.starts_with("https://") {
                     loc.to_string()
                 } else {
-                    base.join(loc).ok().map(|u| u.to_string()).unwrap_or_else(|| loc.to_string())
+                    base.join(loc)
+                        .ok()
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|| loc.to_string())
                 };
                 sitemaps.push(resolved);
             }
@@ -130,10 +136,14 @@ pub fn extract_sitemaps_from_robots(robots_content: &str, base_url: &str) -> Vec
             if let Some(url) = cap.get(1) {
                 let url_str = url.as_str().trim();
 
-                let resolved = if url_str.starts_with("http://") || url_str.starts_with("https://") {
+                let resolved = if url_str.starts_with("http://") || url_str.starts_with("https://")
+                {
                     url_str.to_string()
                 } else {
-                    base.join(url_str).ok().map(|u| u.to_string()).unwrap_or_else(|| url_str.to_string())
+                    base.join(url_str)
+                        .ok()
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|| url_str.to_string())
                 };
 
                 sitemaps.push(resolved);

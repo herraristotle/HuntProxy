@@ -556,10 +556,11 @@ async fn enqueue_discovered_links(
             let form_url = if form.method == "GET" {
                 // For GET forms, append query params
                 let values = forms::generate_form_values(&form);
-                let query: Vec<String> = values.into_iter()
-                    .map(|(k, v)| format!("{}={}",
-                        urlencoding::encode(&k),
-                        urlencoding::encode(&v)))
+                let query: Vec<String> = values
+                    .into_iter()
+                    .map(|(k, v)| {
+                        format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v))
+                    })
                     .collect();
                 if query.is_empty() {
                     form.action.clone()

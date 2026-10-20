@@ -89,7 +89,8 @@ fn extract_form_fields(body: &str) -> Vec<FormField> {
     }
 
     // Textarea fields
-    let textarea_regex = regex::Regex::new(r#"(?is)<textarea\b([^>]*)>([^<]*)</textarea>"#).unwrap();
+    let textarea_regex =
+        regex::Regex::new(r#"(?is)<textarea\b([^>]*)>([^<]*)</textarea>"#).unwrap();
     for cap in textarea_regex.captures_iter(body) {
         let attrs = cap.get(1).map(|m| m.as_str()).unwrap_or("");
 
@@ -191,7 +192,10 @@ pub fn generate_form_values(form: &DiscoveredForm) -> HashMap<String, String> {
 
         values.insert(
             field.name.clone(),
-            field.value.clone().unwrap_or_else(|| default_value.to_string()),
+            field
+                .value
+                .clone()
+                .unwrap_or_else(|| default_value.to_string()),
         );
     }
 

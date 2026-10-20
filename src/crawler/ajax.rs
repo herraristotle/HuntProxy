@@ -43,7 +43,9 @@ pub fn extract_ajax_endpoints(base_url: &str, content: &str) -> Vec<AjaxEndpoint
             for cap in re.captures_iter(content) {
                 if let Some(url) = cap.get(1) {
                     let url_str = url.as_str();
-                    if let Some(endpoint) = resolve_endpoint(&base, url_str, AjaxSource::FetchCall, &mut seen) {
+                    if let Some(endpoint) =
+                        resolve_endpoint(&base, url_str, AjaxSource::FetchCall, &mut seen)
+                    {
                         endpoints.push(endpoint);
                     }
                 }
@@ -58,7 +60,9 @@ pub fn extract_ajax_endpoints(base_url: &str, content: &str) -> Vec<AjaxEndpoint
             if let (Some(method), Some(url)) = (cap.get(1), cap.get(2)) {
                 let method_str = method.as_str().to_uppercase();
                 let url_str = url.as_str();
-                if let Some(mut endpoint) = resolve_endpoint(&base, url_str, AjaxSource::XhrCall, &mut seen) {
+                if let Some(mut endpoint) =
+                    resolve_endpoint(&base, url_str, AjaxSource::XhrCall, &mut seen)
+                {
                     endpoint.method = method_str;
                     endpoints.push(endpoint);
                 }
@@ -75,12 +79,17 @@ pub fn extract_ajax_endpoints(base_url: &str, content: &str) -> Vec<AjaxEndpoint
     for pattern in &axios_patterns {
         if let Ok(re) = Regex::new(pattern) {
             for cap in re.captures_iter(content) {
-                let method = cap.get(1).map(|m| m.as_str().to_uppercase()).unwrap_or_else(|| "GET".to_string());
+                let method = cap
+                    .get(1)
+                    .map(|m| m.as_str().to_uppercase())
+                    .unwrap_or_else(|| "GET".to_string());
                 let url_idx = if pattern.contains("axios\\.(") { 2 } else { 1 };
 
                 if let Some(url) = cap.get(url_idx) {
                     let url_str = url.as_str();
-                    if let Some(mut endpoint) = resolve_endpoint(&base, url_str, AjaxSource::AxiosCall, &mut seen) {
+                    if let Some(mut endpoint) =
+                        resolve_endpoint(&base, url_str, AjaxSource::AxiosCall, &mut seen)
+                    {
                         endpoint.method = method;
                         endpoints.push(endpoint);
                     }
@@ -98,12 +107,21 @@ pub fn extract_ajax_endpoints(base_url: &str, content: &str) -> Vec<AjaxEndpoint
     for pattern in &jquery_patterns {
         if let Ok(re) = Regex::new(pattern) {
             for cap in re.captures_iter(content) {
-                let method = cap.get(1).map(|m| m.as_str().to_uppercase()).unwrap_or_else(|| "GET".to_string());
-                let url_idx = if pattern.contains("\\.(get|post)") { 2 } else { 1 };
+                let method = cap
+                    .get(1)
+                    .map(|m| m.as_str().to_uppercase())
+                    .unwrap_or_else(|| "GET".to_string());
+                let url_idx = if pattern.contains("\\.(get|post)") {
+                    2
+                } else {
+                    1
+                };
 
                 if let Some(url) = cap.get(url_idx) {
                     let url_str = url.as_str();
-                    if let Some(mut endpoint) = resolve_endpoint(&base, url_str, AjaxSource::JqueryAjax, &mut seen) {
+                    if let Some(mut endpoint) =
+                        resolve_endpoint(&base, url_str, AjaxSource::JqueryAjax, &mut seen)
+                    {
                         endpoint.method = method;
                         endpoints.push(endpoint);
                     }
@@ -139,7 +157,9 @@ pub fn extract_ajax_endpoints(base_url: &str, content: &str) -> Vec<AjaxEndpoint
                 let url_str = url.as_str();
                 // Only include if it looks like a backend route (starts with /)
                 if url_str.starts_with('/') && !url_str.contains('*') && !url_str.contains(':') {
-                    if let Some(endpoint) = resolve_endpoint(&base, url_str, AjaxSource::ApiRoute, &mut seen) {
+                    if let Some(endpoint) =
+                        resolve_endpoint(&base, url_str, AjaxSource::ApiRoute, &mut seen)
+                    {
                         endpoints.push(endpoint);
                     }
                 }
@@ -192,7 +212,8 @@ pub fn extract_framework_routes(content: &str) -> Vec<String> {
     let mut seen = HashSet::new();
 
     // Express.js routes: app.get('/path', ...), router.post('/path', ...)
-    let express_pattern = r#"(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]"#;
+    let express_pattern =
+        r#"(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]"#;
     if let Ok(re) = Regex::new(express_pattern) {
         for cap in re.captures_iter(content) {
             if let Some(route) = cap.get(2) {
@@ -247,7 +268,10 @@ mod tests {
         "#;
 
         let endpoints = extract_ajax_endpoints("https://example.com", js);
-        let post_endpoint = endpoints.iter().find(|e| e.url.contains("/api/submit")).unwrap();
+        let post_endpoint = endpoints
+            .iter()
+            .find(|e| e.url.contains("/api/submit"))
+            .unwrap();
         assert_eq!(post_endpoint.method, "POST");
         assert_eq!(post_endpoint.source, AjaxSource::XhrCall);
     }
@@ -261,8 +285,12 @@ mod tests {
         "#;
 
         let endpoints = extract_ajax_endpoints("https://example.com", js);
-        assert!(endpoints.iter().any(|e| e.url.contains("/api/users") && e.method == "GET"));
-        assert!(endpoints.iter().any(|e| e.url.contains("/api/create") && e.method == "POST"));
+        assert!(endpoints
+            .iter()
+            .any(|e| e.url.contains("/api/users") && e.method == "GET"));
+        assert!(endpoints
+            .iter()
+            .any(|e| e.url.contains("/api/create") && e.method == "POST"));
     }
 
     #[test]
@@ -272,7 +300,10 @@ mod tests {
         "#;
 
         let endpoints = extract_ajax_endpoints("https://example.com", js);
-        let graphql = endpoints.iter().find(|e| e.url.contains("/graphql")).unwrap();
+        let graphql = endpoints
+            .iter()
+            .find(|e| e.url.contains("/graphql"))
+            .unwrap();
         assert_eq!(graphql.source, AjaxSource::GraphqlEndpoint);
     }
 
