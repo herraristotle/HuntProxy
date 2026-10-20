@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_fingerprint_tool() {
-    let db = Arc::new(Db::open_in_memory().await.unwrap());
+    let _db = Arc::new(Db::open_in_memory().await.unwrap());
     let _project_id = ProjectId::new(1);
 
     // Mock exchange with React response
@@ -212,7 +212,7 @@ async fn test_dom_monitor_postmessage() {
 #[tokio::test]
 async fn test_command_palette_indexing() {
     // Command palette fuzzy search simulation
-    let tools = vec![
+    let tools = [
         ("fingerprint", "Tech stack detection"),
         ("dashboard", "Multi-plugin orchestration"),
         ("sequencer_analyze", "Token randomness tests"),
