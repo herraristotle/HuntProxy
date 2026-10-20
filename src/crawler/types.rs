@@ -202,7 +202,3 @@ impl Default for CrawlerOptions {
         }
     }
 }
-            navigation_timeout_ms: 30_000,
-        }
-    }
-}
