@@ -1,21 +1,29 @@
 //! Small, one-level background crawler for browser-loaded HTML pages, plus
 //! the managed multi-level crawl engine (`engine.rs` / `jobs.rs`).
 
+mod ajax;
 mod engine;
 mod filter;
+mod forms;
 mod jobs;
 mod queue;
 mod rate_limit;
 mod robots;
+mod sitemap;
 mod stats;
 mod types;
 
+pub use ajax::{extract_ajax_endpoints, extract_framework_routes, AjaxEndpoint, AjaxSource};
 pub use engine::{CrawlEngine, CrawlEngineConfig};
 pub use filter::{filter_matches_url, parse_crawl_filter};
+pub use forms::{extract_forms, generate_form_values, DiscoveredForm, FormField};
 pub use jobs::{CrawlJobManager, StartCrawlRequest};
 pub use queue::{CrawlQueue, QueueStats};
 pub use rate_limit::RateLimiter;
 pub use robots::{RobotsHandler, RobotsTxt};
+pub use sitemap::{
+    extract_sitemaps_from_robots, is_sitemap_index, parse_sitemap, parse_sitemap_index, SitemapUrl,
+};
 pub use stats::StatsTracker;
 pub use types::{
     compute_unique_key, filter_links_by_strategy, CrawlRequest, CrawlRequestState, CrawlStats,

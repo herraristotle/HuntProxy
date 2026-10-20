@@ -2563,7 +2563,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
 
                         let url = format!("https://{}{}", host, target);
 
-                        let draft = crate::reply::ReplyDraft {
+                        let draft = crate::domain::models::ReplyDraft {
                             method: Some(method),
                             url: Some(url),
                             ..Default::default()
@@ -2576,7 +2576,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                                 None,
                                 None,
                                 &draft,
-                                crate::reply::ProtocolPreference::Auto,
+                                crate::domain::models::ProtocolPreference::Auto,
                                 0,
                             )
                             .await?;
@@ -2681,7 +2681,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 .browser
                 .execute_action(
                     project_id,
-                    crate::browser::BrowserSessionId(session_id),
+                    crate::domain::BrowserSessionId(session_id),
                     serde_json::from_value(action)?,
                 )
                 .await?;
@@ -2711,7 +2711,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 .browser
                 .execute_action(
                     project_id,
-                    crate::browser::BrowserSessionId(session_id),
+                    crate::domain::BrowserSessionId(session_id),
                     serde_json::from_value(action)?,
                 )
                 .await?;

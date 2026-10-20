@@ -413,6 +413,7 @@ fn sdk_spec_to_draft(spec: &Value) -> DomainResult<ReplyDraft> {
     Ok(ReplyDraft {
         method: Some(method),
         url: Some(url),
+        identity: None,
         header_overrides: headers,
         header_tombstones: Vec::new(),
         inheritance: ReplyInheritance::FullRequest,

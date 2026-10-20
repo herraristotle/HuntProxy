@@ -30,7 +30,7 @@ use super::types::{
     filter_links_by_strategy, CrawlRequest, CrawlRequestState, CrawlStats, CrawlerOptions,
     LinkStrategy,
 };
-use super::{discover_links, is_html_mime};
+use super::{ajax, discover_links, forms, is_html_mime};
 
 const MAX_HTML_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LINKS_PER_PAGE: usize = 64;
@@ -535,9 +535,46 @@ async fn enqueue_discovered_links(
         detail.summary.scheme, detail.summary.authority, detail.summary.path
     );
     let html = String::from_utf8_lossy(&body);
-    let Ok(discovered) = discover_links(base.as_str(), &html) else {
+
+    // Discover regular links
+    let Ok(discovered_links) = discover_links(base.as_str(), &html) else {
         return;
     };
+
+    // Discover AJAX endpoints if enabled
+    let mut discovered = discovered_links;
+    if options.discover_ajax {
+        let ajax_endpoints = ajax::extract_ajax_endpoints(base.as_str(), &html);
+        discovered.extend(ajax_endpoints.into_iter().map(|e| e.url));
+    }
+
+    // Discover forms if enabled
+    if options.submit_forms {
+        let forms = forms::extract_forms(base.as_str(), &html);
+        for form in forms {
+            // Generate form submission URL
+            let form_url = if form.method == "GET" {
+                // For GET forms, append query params
+                let values = forms::generate_form_values(&form);
+                let query: Vec<String> = values.into_iter()
+                    .map(|(k, v)| format!("{}={}",
+                        urlencoding::encode(&k),
+                        urlencoding::encode(&v)))
+                    .collect();
+                if query.is_empty() {
+                    form.action.clone()
+                } else {
+                    format!("{}?{}", form.action, query.join("&"))
+                }
+            } else {
+                // For POST forms, just queue the action URL
+                // Actual form submission would need request body support
+                form.action.clone()
+            };
+            discovered.push(form_url);
+        }
+    }
+
     let filtered: Vec<String> = discovered
         .into_iter()
         .filter(|url| {

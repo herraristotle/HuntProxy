@@ -152,6 +152,7 @@ impl BuiltInHandler {
         let draft = ReplyDraft {
             method: Some(method),
             url: Some(url),
+            identity: None,
             header_overrides: headers,
             header_tombstones: Vec::new(),
             inheritance: ReplyInheritance::FullRequest,

@@ -173,6 +173,12 @@ pub struct CrawlerOptions {
     /// HuntProxy native query language (same grammar as History search).
     pub filter: Option<String>,
     pub navigation_timeout_ms: u64,
+    /// Discover and crawl AJAX/fetch endpoints from JavaScript
+    pub discover_ajax: bool,
+    /// Auto-submit discovered forms with default values
+    pub submit_forms: bool,
+    /// Parse and crawl URLs from sitemap.xml
+    pub parse_sitemap: bool,
 }
 
 impl Default for CrawlerOptions {
@@ -189,6 +195,13 @@ impl Default for CrawlerOptions {
             respect_robots_txt: false,
             user_agent: "HuntProxy-Crawler".into(),
             filter: None,
+            navigation_timeout_ms: 30_000,
+            discover_ajax: false,
+            submit_forms: false,
+            parse_sitemap: false,
+        }
+    }
+}
             navigation_timeout_ms: 30_000,
         }
     }
