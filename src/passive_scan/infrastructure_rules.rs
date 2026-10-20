@@ -45,10 +45,9 @@ impl PassiveRule for DirectoryListingDetection {
                     confidence: 95,
                     cwe_id: Some(548), // CWE-548: Information Exposure Through Directory Listing
                     description: format!(
-                        "Directory listing enabled ({}). Exposes file structure.",
-                        source
+                        "Directory listing enabled ({source}). Exposes file structure."
                     ),
-                    evidence: format!("Pattern: {}", pattern),
+                    evidence: format!("Pattern: {pattern}"),
                     references: vec![
                         "https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload"
                             .to_string(),
@@ -244,7 +243,7 @@ impl PassiveRule for GitLabTokenDetection {
                 confidence: 95,
                 cwe_id: Some(798),
                 description: "GitLab personal access token exposed. Grants API access.".to_string(),
-                evidence: format!("Token: {}", redacted),
+                evidence: format!("Token: {redacted}"),
                 references: vec![
                     "https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html"
                         .to_string(),

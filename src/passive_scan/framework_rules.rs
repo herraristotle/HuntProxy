@@ -199,11 +199,11 @@ impl PassiveRule for SpringActuator {
 
                 return Some(PassiveRuleResult {
                     rule_id: format!("{}-{}", self.id(), endpoint.replace('/', "-")),
-                    name: format!("Spring Boot Actuator: {}", endpoint),
+                    name: format!("Spring Boot Actuator: {endpoint}"),
                     severity,
                     confidence: 100,
                     cwe_id: Some(215),
-                    description: format!("Spring Boot Actuator endpoint exposed: {}. May reveal environment variables, configuration, and application state.", endpoint),
+                    description: format!("Spring Boot Actuator endpoint exposed: {endpoint}. May reveal environment variables, configuration, and application state."),
                     evidence: format!("Endpoint: {}", exchange.url),
                     references: vec![
                         "https://docs.spring.io/spring-boot/docs/current/reference/html/actuator.html".to_string(),

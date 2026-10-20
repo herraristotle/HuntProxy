@@ -78,7 +78,7 @@ mod tests {
     use super::*;
     use crate::active_scan::checks::*;
     use crate::domain::*;
-    use crate::fuzzer::variants::{InjectionPoint, VariantType};
+    use crate::fuzzer::variants::InjectionPoint;
     use async_trait::async_trait;
 
     struct CheckA;

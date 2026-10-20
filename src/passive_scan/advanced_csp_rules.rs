@@ -54,7 +54,7 @@ impl PassiveRule for MalformedCsp {
                     "CSP contains syntax errors: {}. Browser may ignore entire policy.",
                     issues.join(", ")
                 ),
-                evidence: format!("CSP: {}", csp),
+                evidence: format!("CSP: {csp}"),
                 references: vec!["https://content-security-policy.com/".to_string()],
             });
         }

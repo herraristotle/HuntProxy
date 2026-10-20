@@ -212,7 +212,7 @@ impl PassiveRule for SensitiveFileDetection {
         let status = exchange.status?;
 
         // Only check successful responses
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return None;
         }
 

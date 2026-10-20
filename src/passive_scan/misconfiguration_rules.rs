@@ -95,7 +95,7 @@ impl PassiveRule for CorsReflectedOrigin {
                 confidence: 90,
                 cwe_id: Some(942),
                 description: "CORS reflects arbitrary origin with credentials. Any site can read authenticated responses.".to_string(),
-                evidence: format!("Origin {} reflected in Access-Control-Allow-Origin", request_origin),
+                evidence: format!("Origin {request_origin} reflected in Access-Control-Allow-Origin"),
                 references: vec![
                     "https://portswigger.net/web-security/cors".to_string(),
                 ],
@@ -155,7 +155,7 @@ impl PassiveRule for DangerousHttpMethods {
                 confidence: 95,
                 cwe_id: Some(16), // CWE-16: Configuration
                 description: format!("Dangerous HTTP methods enabled: {}. TRACE/TRACK enable XST attacks. PUT/DELETE may allow unauthorized modifications.", found.join(", ")),
-                evidence: format!("Allow: {}", allow),
+                evidence: format!("Allow: {allow}"),
                 references: vec![
                     "https://owasp.org/www-community/attacks/Cross_Site_Tracing".to_string(),
                 ],
@@ -182,7 +182,7 @@ impl PassiveRule for TlsVersionCheck {
         true
     }
 
-    async fn scan(&self, exchange: &PassiveScanExchange) -> Option<PassiveRuleResult> {
+    async fn scan(&self, _exchange: &PassiveScanExchange) -> Option<PassiveRuleResult> {
         // Note: This requires TLS info from the transport layer
         // Placeholder for when we add TLS metadata to exchanges
         None

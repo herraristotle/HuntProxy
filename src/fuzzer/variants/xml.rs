@@ -4,8 +4,9 @@ use super::{InjectionPoint, VariantType};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-static XML_TAG: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"<([a-zA-Z0-9_-]+)[^>]*>([^<]*)</\1>").expect("valid XML regex"));
+static XML_TAG: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"<([a-zA-Z0-9_-]+)[^>]*>([^<]*)</[a-zA-Z0-9_-]+>").expect("valid XML regex")
+});
 
 pub struct XmlVariant;
 
@@ -26,7 +27,7 @@ impl XmlVariant {
                 points.push(InjectionPoint {
                     name: tag_name.to_string(),
                     variant_type: VariantType::Xml,
-                    location: format!("xml:{}", tag_name),
+                    location: format!("xml:{tag_name}"),
                     original_value: content.to_string(),
                     content_type: Some("application/xml".to_string()),
                 });
@@ -43,10 +44,11 @@ impl XmlVariant {
         };
 
         let tag_name = location.strip_prefix("xml:").unwrap_or(location);
-        let tag_regex = Regex::new(&format!(r"(<{}[^>]*>)([^<]*)(</{}>\)", tag_name, tag_name))
+        // Use a simpler regex without backreferences
+        let tag_regex = Regex::new(&format!(r"(<{tag_name}[^>]*>)([^<]*)(</{tag_name}>)"))
             .unwrap_or_else(|_| Regex::new(r"dummy").unwrap());
 
-        let result = tag_regex.replace(text, format!("$1{}$3", payload));
+        let result = tag_regex.replace(text, format!("$1{payload}$3"));
         result.as_bytes().to_vec()
     }
 }

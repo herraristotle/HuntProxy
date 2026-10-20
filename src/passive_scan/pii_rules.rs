@@ -45,7 +45,7 @@ impl PassiveRule for CreditCardDisclosure {
                     cwe_id: Some(359), // CWE-359: Exposure of Private Information
                     description: "Credit card number exposed in response. PCI-DSS violation."
                         .to_string(),
-                    evidence: format!("Card number: {}", redacted),
+                    evidence: format!("Card number: {redacted}"),
                     references: vec!["https://www.pcisecuritystandards.org/".to_string()],
                 });
             }
@@ -132,7 +132,7 @@ impl PassiveRule for SsnDisclosure {
                         description:
                             "Social Security Number exposed in response. Severe privacy violation."
                                 .to_string(),
-                        evidence: format!("SSN: {}", redacted),
+                        evidence: format!("SSN: {redacted}"),
                         references: vec!["https://www.ssa.gov/".to_string()],
                     });
                 }
@@ -257,12 +257,12 @@ impl PassiveRule for HashDisclosure {
 
                     return Some(PassiveRuleResult {
                         rule_id: format!("{}-{}", self.id(), hash_type.to_lowercase().replace(' ', "-")),
-                        name: format!("{} Hash Exposed", hash_type),
+                        name: format!("{hash_type} Hash Exposed"),
                         severity: *severity,
                         confidence: 80,
                         cwe_id: Some(256), // CWE-256: Unprotected Storage of Credentials
-                        description: format!("{} password hash exposed. May enable offline cracking.", hash_type),
-                        evidence: format!("Hash: {}", redacted),
+                        description: format!("{hash_type} password hash exposed. May enable offline cracking."),
+                        evidence: format!("Hash: {redacted}"),
                         references: vec![
                             "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html".to_string(),
                         ],
@@ -314,7 +314,7 @@ impl PassiveRule for PrivateIpDisclosure {
                 cwe_id: Some(200),
                 description: "Private IP address exposed. May reveal internal network topology."
                     .to_string(),
-                evidence: format!("IP: {}", ip),
+                evidence: format!("IP: {ip}"),
                 references: vec![],
             });
         }
@@ -348,17 +348,14 @@ impl PassiveRule for DbConnectionDisclosure {
         let body_str = String::from_utf8_lossy(body);
 
         let db_patterns = [
-            (r#"(?i)mongodb://[^/\s]+/[^\s\"'<>]+"#, "MongoDB"),
+            (r#"(?i)mongodb://[^/\s]+/[^\s"'<>]+"#, "MongoDB"),
+            (r#"(?i)mysql://[^/\s]+:[^@\s]+@[^/\s]+/[^\s"'<>]+"#, "MySQL"),
             (
-                r#"(?i)mysql://[^/\s]+:[^@\s]+@[^/\s]+/[^\s\"'<>]+"#,
-                "MySQL",
-            ),
-            (
-                r#"(?i)postgres(?:ql)?://[^/\s]+:[^@\s]+@[^/\s]+/[^\s\"'<>]+"#,
+                r#"(?i)postgres(?:ql)?://[^/\s]+:[^@\s]+@[^/\s]+/[^\s"'<>]+"#,
                 "PostgreSQL",
             ),
             (r"(?i)Server=[^;]+;Database=[^;]+;", "SQL Server"),
-            (r#"(?i)redis://[^/\s]+/[^\s\"'<>]+"#, "Redis"),
+            (r#"(?i)redis://[^/\s]+/[^\s"'<>]+"#, "Redis"),
         ];
 
         for (pattern, db_type) in &db_patterns {
@@ -373,15 +370,14 @@ impl PassiveRule for DbConnectionDisclosure {
 
                     return Some(PassiveRuleResult {
                         rule_id: format!("{}-{}", self.id(), db_type.to_lowercase()),
-                        name: format!("{} Connection String Exposed", db_type),
+                        name: format!("{db_type} Connection String Exposed"),
                         severity: RuleSeverity::Critical,
                         confidence: 95,
                         cwe_id: Some(798), // CWE-798: Use of Hard-coded Credentials
                         description: format!(
-                            "{} database connection string with credentials exposed.",
-                            db_type
+                            "{db_type} database connection string with credentials exposed."
                         ),
-                        evidence: format!("Connection: {}", redacted),
+                        evidence: format!("Connection: {redacted}"),
                         references: vec![],
                     });
                 }

@@ -4,7 +4,7 @@ use super::policy::ScanPolicy;
 use crate::domain::*;
 use crate::fuzzer::variants::InjectionPoint;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 

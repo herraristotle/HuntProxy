@@ -382,7 +382,7 @@ mod tests {
         let body = r#"{"token":"xyz789abc123def456"}"#;
 
         let tokens = extract_tokens_from_response(&headers, Some(body));
-        assert!(tokens.len() >= 1);
+        assert!(!tokens.is_empty());
         assert_eq!(tokens[0].2, "cookie");
     }
 

@@ -57,7 +57,7 @@ impl PassiveRule for BigRedirects {
                     body.len(),
                     location.len()
                 ),
-                evidence: format!("Location: {}", location),
+                evidence: format!("Location: {location}"),
                 references: vec![],
             });
         }
@@ -70,10 +70,9 @@ impl PassiveRule for BigRedirects {
                 confidence: 70,
                 cwe_id: Some(200),
                 description: format!(
-                    "Redirect response embeds {} href links; unusual for a redirect and may leak content",
-                    href_count
+                    "Redirect response embeds {href_count} href links; unusual for a redirect and may leak content"
                 ),
-                evidence: format!("{} href occurrences", href_count),
+                evidence: format!("{href_count} href occurrences"),
                 references: vec![],
             });
         }
@@ -183,7 +182,7 @@ impl PassiveRule for SqlStatementInParams {
                     cwe_id: Some(89),
                     description: "Request parameter carries raw SQL statement text; if it reaches a query builder this is direct SQL injection"
                         .to_string(),
-                    evidence: format!("Pattern: {} (value redacted)", pattern),
+                    evidence: format!("Pattern: {pattern} (value redacted)"),
                     references: vec![
                         "https://owasp.org/www-community/attacks/SQL_Injection".to_string(),
                     ],
@@ -397,10 +396,9 @@ impl PassiveRule for DebugErrors {
                     confidence: 75,
                     cwe_id: Some(209),
                     description: format!(
-                        "Debug error output ({} family) leaks internal structure during reconnaissance",
-                        family
+                        "Debug error output ({family} family) leaks internal structure during reconnaissance"
                     ),
-                    evidence: format!("Pattern: {}", pattern),
+                    evidence: format!("Pattern: {pattern}"),
                     references: vec![],
                 });
             }
@@ -457,7 +455,7 @@ impl PassiveRule for LinkManipulation {
             for attr in ["href=\"", "src=\"", "href='", "src='"] {
                 if let Some(start) = text.find(attr) {
                     let rest = &text[start + attr.len()..];
-                    if let Some(end) = rest.find(|c| c == '"' || c == '\'') {
+                    if let Some(end) = rest.find(['"', '\'']) {
                         let attr_value = &rest[..end];
                         if attr_value.contains(&value) {
                             return Some(PassiveRuleResult {
@@ -470,7 +468,7 @@ impl PassiveRule for LinkManipulation {
                                     "Parameter {} is reflected into a link attribute; javascript: or //evil values enable XSS/open-redirect via links",
                                     urlencoding::decode(key).unwrap_or_default()
                                 ),
-                                evidence: format!("{}<redacted>", attr),
+                                evidence: format!("{attr}<redacted>"),
                                 references: vec![],
                             });
                         }

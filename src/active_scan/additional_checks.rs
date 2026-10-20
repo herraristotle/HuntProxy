@@ -485,7 +485,7 @@ impl ActiveCheck for OpenRedirectCheck {
                         "Open redirect in {}: Location header points at attacker domain",
                         point.name
                     ),
-                    evidence: format!("Location: {}", location),
+                    evidence: format!("Location: {location}"),
                     attack_payload: test_domain.to_string(),
                     injection_point: point.location.clone(),
                 }));
@@ -653,7 +653,7 @@ impl ActiveCheck for SuspectTransformCheck {
                         "Server evaluates injected expressions in {}: arithmetic result reflected",
                         point.name
                     ),
-                    evidence: format!("Product {} observed in response", EVAL_PRODUCT),
+                    evidence: format!("Product {EVAL_PRODUCT} observed in response"),
                     attack_payload: payload.clone(),
                     injection_point: point.location.clone(),
                 }));
@@ -723,7 +723,7 @@ impl ActiveCheck for TraceMethodCheck {
                 description: "TRACE is enabled and echoes request headers; Cross-Site Tracing can steal HttpOnly cookies and Authorization headers"
                     .to_string(),
                 evidence: "Custom X-Scanner-Trace header reflected in TRACE response".to_string(),
-                attack_payload: format!("TRACE with X-Scanner-Trace: {}", canary),
+                attack_payload: format!("TRACE with X-Scanner-Trace: {canary}"),
                 injection_point: "request method".to_string(),
             }));
         }
@@ -968,8 +968,8 @@ impl ActiveCheck for CssInjectionCheck {
 
         // style append (inside <style> or style="") and class append payloads
         let probes = [
-            (format!(";--{}", marker), "style context"),
-            (format!(" {}", marker), "class context"),
+            (format!(";--{marker}"), "style context"),
+            (format!(" {marker}"), "class context"),
         ];
 
         for (payload, context) in probes {

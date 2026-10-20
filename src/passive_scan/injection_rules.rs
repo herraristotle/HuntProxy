@@ -44,8 +44,8 @@ impl PassiveRule for SstiDetection {
                         severity: RuleSeverity::High,
                         confidence: 70,
                         cwe_id: Some(1336), // CWE-1336: Template Injection
-                        description: format!("Template syntax in URL reflected in response: {}. Possible SSTI vulnerability.", desc),
-                        evidence: format!("Pattern: {}", pattern),
+                        description: format!("Template syntax in URL reflected in response: {desc}. Possible SSTI vulnerability."),
+                        evidence: format!("Pattern: {pattern}"),
                         references: vec![
                             "https://portswigger.net/web-security/server-side-template-injection".to_string(),
                         ],
@@ -95,8 +95,8 @@ impl PassiveRule for PathTraversalPatterns {
                     severity: RuleSeverity::High,
                     confidence: 85,
                     cwe_id: Some(22), // CWE-22: Path Traversal
-                    description: format!("System file path ({}) found in response. May indicate path traversal vulnerability.", pattern),
-                    evidence: format!("Pattern: {}", pattern),
+                    description: format!("System file path ({pattern}) found in response. May indicate path traversal vulnerability."),
+                    evidence: format!("Pattern: {pattern}"),
                     references: vec![
                         "https://owasp.org/www-community/attacks/Path_Traversal".to_string(),
                     ],
@@ -186,7 +186,7 @@ impl PassiveRule for LdapInjectionPatterns {
                     description:
                         "LDAP error message in response. May indicate LDAP injection vulnerability."
                             .to_string(),
-                    evidence: format!("Pattern: {}", pattern),
+                    evidence: format!("Pattern: {pattern}"),
                     references: vec![
                         "https://owasp.org/www-community/attacks/LDAP_Injection".to_string()
                     ],
@@ -233,12 +233,12 @@ impl PassiveRule for NoSqlInjectionPatterns {
             if body_str.contains(pattern) {
                 return Some(PassiveRuleResult {
                     rule_id: format!("{}-{}", self.id(), db_type.to_lowercase()),
-                    name: format!("{} Error Detected", db_type),
+                    name: format!("{db_type} Error Detected"),
                     severity: RuleSeverity::Medium,
                     confidence: 75,
                     cwe_id: Some(943), // CWE-943: Improper Neutralization of Special Elements
-                    description: format!("{} error in response. May indicate NoSQL injection vulnerability.", db_type),
-                    evidence: format!("Pattern: {}", pattern),
+                    description: format!("{db_type} error in response. May indicate NoSQL injection vulnerability."),
+                    evidence: format!("Pattern: {pattern}"),
                     references: vec![
                         "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/05.6-Testing_for_NoSQL_Injection".to_string(),
                     ],

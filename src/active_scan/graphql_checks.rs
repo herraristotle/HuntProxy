@@ -135,8 +135,8 @@ impl ActiveCheck for HostHeaderInjectionCheck {
                     cwe_id: Some(644),
                     description: "Host header influences redirect Location: enables password-reset poisoning and cache poisoning"
                         .to_string(),
-                    evidence: format!("Location: {}", location),
-                    attack_payload: format!("Host: {}", test_host),
+                    evidence: format!("Location: {location}"),
+                    attack_payload: format!("Host: {test_host}"),
                     injection_point: "Host header".to_string(),
                 }));
             }
@@ -153,7 +153,7 @@ impl ActiveCheck for HostHeaderInjectionCheck {
                     "Host header reflected in response body: possible cache/web-cache deception"
                         .to_string(),
                 evidence: "Injected Host value echoed in body".to_string(),
-                attack_payload: format!("Host: {}", test_host),
+                attack_payload: format!("Host: {test_host}"),
                 injection_point: "Host header".to_string(),
             }));
         }
@@ -226,15 +226,14 @@ impl ActiveCheck for SubdomainTakeoverCheck {
                         self.id(),
                         service.to_ascii_lowercase().replace(' ', "-")
                     ),
-                    name: format!("Subdomain Takeover: {}", service),
+                    name: format!("Subdomain Takeover: {service}"),
                     severity: *severity,
                     confidence: 80,
                     cwe_id: Some(350),
                     description: format!(
-                        "Host serves the unclaimed-{} error page; dangling DNS may allow takeover",
-                        service
+                        "Host serves the unclaimed-{service} error page; dangling DNS may allow takeover"
                     ),
-                    evidence: format!("Fingerprint: {}", pattern),
+                    evidence: format!("Fingerprint: {pattern}"),
                     attack_payload: "N/A (no probe sent; response inspected)".to_string(),
                     injection_point: "DNS / subdomain".to_string(),
                 }));

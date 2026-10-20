@@ -89,21 +89,21 @@ impl ScanPolicy {
     pub fn disable_check(&mut self, check_id: &str) {
         self.check_configs
             .entry(check_id.to_string())
-            .or_insert_with(CheckConfig::default)
+            .or_default()
             .enabled = false;
     }
 
     pub fn enable_check(&mut self, check_id: &str) {
         self.check_configs
             .entry(check_id.to_string())
-            .or_insert_with(CheckConfig::default)
+            .or_default()
             .enabled = true;
     }
 
     pub fn set_check_strength(&mut self, check_id: &str, strength: AttackStrength) {
         self.check_configs
             .entry(check_id.to_string())
-            .or_insert_with(CheckConfig::default)
+            .or_default()
             .attack_strength = strength;
     }
 
@@ -145,6 +145,7 @@ impl ScanPolicy {
 }
 
 /// Predefined scan policies.
+#[allow(dead_code)]
 pub fn default_policies() -> Vec<ScanPolicy> {
     vec![
         ScanPolicy::default(),

@@ -305,7 +305,7 @@ impl ActiveCheck for SqlInjectionCheck {
                         "SQL error triggered in {} by injected syntax",
                         point.name
                     ),
-                    evidence: format!("Database error: {}", pattern),
+                    evidence: format!("Database error: {pattern}"),
                     attack_payload: payload.clone(),
                     injection_point: point.location.clone(),
                 }));
@@ -407,7 +407,7 @@ impl ActiveCheck for CommandInjectionCheck {
                         "OS command injection in {}: injected command output observed",
                         point.name
                     ),
-                    evidence: format!("Marker {} echoed by target", marker),
+                    evidence: format!("Marker {marker} echoed by target"),
                     attack_payload: payload.clone(),
                     injection_point: point.location.clone(),
                 }));

@@ -49,7 +49,7 @@ pub enum VariantType {
 
 /// Extract all injection points from a request.
 pub fn extract_injection_points(
-    method: &str,
+    _method: &str,
     url: &str,
     headers: &[(String, String)],
     body: Option<&[u8]>,
@@ -63,7 +63,7 @@ pub fn extract_injection_points(
                 points.push(InjectionPoint {
                     name: urlencoding::decode(key).unwrap_or_default().to_string(),
                     variant_type: VariantType::UrlQuery,
-                    location: format!("query:{}", key),
+                    location: format!("query:{key}"),
                     original_value: urlencoding::decode(value).unwrap_or_default().to_string(),
                     content_type: None,
                 });
@@ -89,9 +89,9 @@ pub fn extract_injection_points(
             || (segment.len() > 8 && segment.chars().all(|c| c.is_alphanumeric() || c == '-'))
         {
             points.push(InjectionPoint {
-                name: format!("path_segment_{}", index),
+                name: format!("path_segment_{index}"),
                 variant_type: VariantType::UrlPath,
-                location: format!("path:{}", index),
+                location: format!("path:{index}"),
                 original_value: segment.to_string(),
                 content_type: None,
             });
@@ -106,7 +106,7 @@ pub fn extract_injection_points(
                     points.push(InjectionPoint {
                         name: name.to_string(),
                         variant_type: VariantType::Cookie,
-                        location: format!("cookie:{}", name),
+                        location: format!("cookie:{name}"),
                         original_value: val.to_string(),
                         content_type: None,
                     });
@@ -132,7 +132,7 @@ pub fn extract_injection_points(
             points.push(InjectionPoint {
                 name: key.clone(),
                 variant_type: VariantType::Header,
-                location: format!("header:{}", key),
+                location: format!("header:{key}"),
                 original_value: value.clone(),
                 content_type: None,
             });
@@ -196,14 +196,12 @@ fn extract_graphql_variables(body: &[u8]) -> Vec<InjectionPoint> {
 
     variables
         .iter()
-        .filter_map(|(key, value)| {
-            Some(InjectionPoint {
-                name: key.clone(),
-                variant_type: VariantType::GraphQl,
-                location: format!("graphql:{}", key),
-                original_value: value.to_string(),
-                content_type: Some("application/graphql".to_string()),
-            })
+        .map(|(key, value)| InjectionPoint {
+            name: key.clone(),
+            variant_type: VariantType::GraphQl,
+            location: format!("graphql:{key}"),
+            original_value: value.to_string(),
+            content_type: Some("application/graphql".to_string()),
         })
         .collect()
 }
@@ -212,7 +210,7 @@ fn extract_graphql_variables(body: &[u8]) -> Vec<InjectionPoint> {
 pub fn apply_payload(
     point: &InjectionPoint,
     payload: &str,
-    method: &str,
+    _method: &str,
     url: &str,
     headers: &[(String, String)],
     body: Option<Vec<u8>>,
@@ -270,14 +268,14 @@ fn replace_url_param(url: &str, param_name: &str, new_value: &str) -> String {
                 if let Some((key, _)) = pair.split_once('=') {
                     let decoded_key = urlencoding::decode(key).unwrap_or_default();
                     if decoded_key == param_name {
-                        return format!("{}={}", key, encoded_value);
+                        return format!("{key}={encoded_value}");
                     }
                 }
                 pair.to_string()
             })
             .collect::<Vec<_>>()
             .join("&");
-        format!("{}?{}", base, new_query)
+        format!("{base}?{new_query}")
     } else {
         url.to_string()
     }
@@ -301,7 +299,7 @@ fn replace_path_segment(url: &str, location: &str, new_value: &str) -> String {
     if query.is_empty() {
         new_path
     } else {
-        format!("{}?{}", new_path, query)
+        format!("{new_path}?{query}")
     }
 }
 
@@ -319,7 +317,7 @@ fn replace_cookie(
                     .map(|part| {
                         if let Some((name, _)) = part.trim().split_once('=') {
                             if name == cookie_name {
-                                return format!("{}={}", name, new_value);
+                                return format!("{name}={new_value}");
                             }
                         }
                         part.to_string()

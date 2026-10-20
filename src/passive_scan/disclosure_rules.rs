@@ -249,7 +249,7 @@ impl PassiveRule for ApiKeyDisclosure {
             exchange
                 .response_headers
                 .iter()
-                .map(|(k, v)| format!("{}: {}", k, v))
+                .map(|(k, v)| format!("{k}: {v}"))
                 .collect::<Vec<_>>()
                 .join("\n"),
             body_str
@@ -277,7 +277,7 @@ impl PassiveRule for ApiKeyDisclosure {
                             "{} found in response. This could allow unauthorized access to cloud resources or third-party services.",
                             pattern_def.name
                         ),
-                        evidence: format!("Found: {}", redacted),
+                        evidence: format!("Found: {redacted}"),
                         references: vec![
                             "https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_password".to_string(),
                             "https://cwe.mitre.org/data/definitions/798.html".to_string(),

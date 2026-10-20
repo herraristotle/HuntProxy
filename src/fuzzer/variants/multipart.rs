@@ -12,7 +12,8 @@ impl MultipartVariant {
         };
 
         let mut points = Vec::new();
-        let parts = text.split(&format!("--{}", boundary));
+        let boundary_str = format!("--{boundary}");
+        let parts = text.split(&boundary_str);
 
         for part in parts.skip(1) {
             if let Some(field_name) = extract_field_name(part) {
@@ -20,7 +21,7 @@ impl MultipartVariant {
                     points.push(InjectionPoint {
                         name: field_name.clone(),
                         variant_type: VariantType::Multipart,
-                        location: format!("multipart:{}", field_name),
+                        location: format!("multipart:{field_name}"),
                         original_value: value,
                         content_type: Some("multipart/form-data".to_string()),
                     });

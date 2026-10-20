@@ -33,7 +33,7 @@ impl JsonVariant {
 
         // location format: "json:user.name" or "json:items[0].id"
         let path = location.strip_prefix("json:").unwrap_or(location);
-        set_value_at_path(&mut json, path, payload);
+        let _ = set_value_at_path(&mut json, path, payload);
 
         serde_json::to_vec(&json).unwrap_or_else(|_| body.to_vec())
     }
@@ -47,7 +47,7 @@ fn extract_fields(value: &Value, prefix: &str, points: &mut Vec<InjectionPoint>)
                 let path = if prefix.is_empty() {
                     key.clone()
                 } else {
-                    format!("{}.{}", prefix, key)
+                    format!("{prefix}.{key}")
                 };
 
                 match val {
@@ -55,7 +55,7 @@ fn extract_fields(value: &Value, prefix: &str, points: &mut Vec<InjectionPoint>)
                         points.push(InjectionPoint {
                             name: path.clone(),
                             variant_type: VariantType::Json,
-                            location: format!("json:{}", path),
+                            location: format!("json:{path}"),
                             original_value: s.clone(),
                             content_type: Some("application/json".to_string()),
                         });
@@ -64,7 +64,7 @@ fn extract_fields(value: &Value, prefix: &str, points: &mut Vec<InjectionPoint>)
                         points.push(InjectionPoint {
                             name: path.clone(),
                             variant_type: VariantType::Json,
-                            location: format!("json:{}", path),
+                            location: format!("json:{path}"),
                             original_value: n.to_string(),
                             content_type: Some("application/json".to_string()),
                         });
@@ -73,7 +73,7 @@ fn extract_fields(value: &Value, prefix: &str, points: &mut Vec<InjectionPoint>)
                         points.push(InjectionPoint {
                             name: path.clone(),
                             variant_type: VariantType::Json,
-                            location: format!("json:{}", path),
+                            location: format!("json:{path}"),
                             original_value: b.to_string(),
                             content_type: Some("application/json".to_string()),
                         });
@@ -81,7 +81,7 @@ fn extract_fields(value: &Value, prefix: &str, points: &mut Vec<InjectionPoint>)
                     Value::Object(_) => extract_fields(val, &path, points),
                     Value::Array(arr) => {
                         for (index, item) in arr.iter().enumerate() {
-                            extract_fields(item, &format!("{}[{}]", path, index), points);
+                            extract_fields(item, &format!("{path}[{index}]"), points);
                         }
                     }
                     Value::Null => {}
@@ -90,7 +90,7 @@ fn extract_fields(value: &Value, prefix: &str, points: &mut Vec<InjectionPoint>)
         }
         Value::Array(arr) => {
             for (index, item) in arr.iter().enumerate() {
-                let path = format!("{}[{}]", prefix, index);
+                let path = format!("{prefix}[{index}]");
                 extract_fields(item, &path, points);
             }
         }
@@ -99,7 +99,7 @@ fn extract_fields(value: &Value, prefix: &str, points: &mut Vec<InjectionPoint>)
 }
 
 /// Set value at JSON path (supports nested objects and arrays).
-fn set_value_at_path(json: &mut Value, path: &str, new_value: &str) {
+fn set_value_at_path(json: &mut Value, path: &str, new_value: &str) -> Result<(), ()> {
     let parts: Vec<&str> = path.split('.').collect();
     let mut current = json;
 
@@ -111,17 +111,21 @@ fn set_value_at_path(json: &mut Value, path: &str, new_value: &str) {
             let index: usize = index_str.trim_end_matches(']').parse().unwrap_or(0);
 
             if !key.is_empty() {
-                current = current.get_mut(key)?;
+                current = current.get_mut(key).ok_or(())?;
             }
 
             if let Some(arr) = current.as_array_mut() {
                 if let Some(element) = arr.get_mut(index) {
                     if is_last {
                         *element = Value::String(new_value.to_string());
-                        return;
+                        return Ok(());
                     }
                     current = element;
+                } else {
+                    return Err(());
                 }
+            } else {
+                return Err(());
             }
         } else if is_last {
             // Set final value
@@ -135,12 +139,16 @@ fn set_value_at_path(json: &mut Value, path: &str, new_value: &str) {
                     Value::String(new_value.to_string())
                 };
                 obj.insert(part.to_string(), typed_value);
+                return Ok(());
+            } else {
+                return Err(());
             }
         } else {
             // Navigate deeper
-            current = current.get_mut(*part)?;
+            current = current.get_mut(*part).ok_or(())?;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

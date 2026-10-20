@@ -165,7 +165,7 @@ impl PassiveRule for WeakCspRule {
             confidence: 95,
             cwe_id: Some(1021), // CWE-1021: Improper Restriction of Rendered UI Layers
             description: format!("Weak CSP: {}", issues.join("; ")),
-            evidence: format!("CSP: {}", csp),
+            evidence: format!("CSP: {csp}"),
             references: vec!["https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP".to_string()],
         })
     }
@@ -208,13 +208,13 @@ impl PassiveRule for InsecureCookieRule {
             let cookie_name = cookie.split('=').next().unwrap_or("unknown");
 
             if is_https && !cookie_lower.contains("secure") {
-                issues.push(format!("{}: missing Secure flag", cookie_name));
+                issues.push(format!("{cookie_name}: missing Secure flag"));
             }
             if !cookie_lower.contains("httponly") && !cookie_name.starts_with("__Host-") {
-                issues.push(format!("{}: missing HttpOnly flag", cookie_name));
+                issues.push(format!("{cookie_name}: missing HttpOnly flag"));
             }
             if !cookie_lower.contains("samesite") {
-                issues.push(format!("{}: missing SameSite attribute", cookie_name));
+                issues.push(format!("{cookie_name}: missing SameSite attribute"));
             }
         }
 
@@ -282,7 +282,7 @@ impl PassiveRule for InfoDisclosureRule {
                         severity: RuleSeverity::Medium,
                         confidence: 85,
                         cwe_id: Some(209), // CWE-209: Information Exposure Through Error Message
-                        description: format!("Potential information disclosure: {}", desc),
+                        description: format!("Potential information disclosure: {desc}"),
                         evidence: evidence.chars().take(200).collect(),
                         references: vec![
                             "https://owasp.org/www-community/Improper_Error_Handling".to_string()
@@ -341,9 +341,9 @@ impl PassiveRule for XssReflectionRule {
                 if body_str.contains(decoded.as_ref()) {
                     // Check if it's in a dangerous context (not in comments/attributes)
                     let dangerous_contexts = [
-                        format!(">{}<", decoded),
-                        format!("<script>{}", decoded),
-                        format!("javascript:{}", decoded),
+                        format!(">{decoded}<"),
+                        format!("<script>{decoded}"),
+                        format!("javascript:{decoded}"),
                     ];
 
                     for ctx in &dangerous_contexts {
@@ -412,7 +412,7 @@ impl PassiveRule for SqlErrorRule {
                         severity: RuleSeverity::Medium,
                         confidence: 90,
                         cwe_id: Some(89), // CWE-89: SQL Injection
-                        description: format!("SQL error message detected ({})", db_type),
+                        description: format!("SQL error message detected ({db_type})"),
                         evidence: matched.as_str().chars().take(200).collect(),
                         references: vec![
                             "https://owasp.org/www-community/attacks/SQL_Injection".to_string()
