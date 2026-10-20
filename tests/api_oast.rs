@@ -11,7 +11,7 @@ use ctr::cipher::{KeyIvInit, StreamCipher};
 use huntproxy::app::bootstrap_state;
 use huntproxy::config::{Config, OastConfig, OastProviderKind};
 use rand::RngCore;
-use rand0::rngs::OsRng;
+use rand0::rng;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::{Oaep, RsaPublicKey};
 use sha2::Sha256;
@@ -127,7 +127,7 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
                 let mut aes_key = [0u8; 32];
                 rand::thread_rng().fill_bytes(&mut aes_key);
                 let wrapped = public
-                    .encrypt(&mut OsRng, Oaep::new::<Sha256>(), &aes_key)
+                    .encrypt(&mut rand0::rng(), Oaep::new::<Sha256>(), &aes_key)
                     .unwrap();
                 let interaction = serde_json::json!({
                     "protocol": "dns",
