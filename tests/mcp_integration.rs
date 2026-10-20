@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_fingerprint_tool() {
-    let db = Arc::new(Db::memory().await.unwrap());
+    let db = Arc::new(Db::open_in_memory().await.unwrap());
     let project_id = ProjectId::new(1);
 
     // Mock exchange with React response
