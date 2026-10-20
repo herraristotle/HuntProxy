@@ -85,17 +85,14 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
     Mock::given(method("POST"))
         .and(path("/register"))
         .respond_with(move |req: &Request| {
-            let slot = registration.clone();
-            async move {
-                if !req.body.is_empty() {
-                    *slot.lock().expect("register body") =
-                        Some(String::from_utf8_lossy(&req.body).into_owned());
-                }
-                // Mainline contract: a 200 that does not say "registration
-                // successful" is a failed registration.
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "message": "registration successful" }))
+            if !req.body.is_empty() {
+                *registration.lock().expect("register body") =
+                    Some(String::from_utf8_lossy(&req.body).into_owned());
             }
+            // Mainline contract: a 200 that does not say "registration
+            // successful" is a failed registration.
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "message": "registration successful" }))
         })
         .expect(1)
         .mount(server)
@@ -106,49 +103,45 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
     Mock::given(method("GET"))
         .and(path("/poll"))
         .respond_with(move |_req: &Request| {
-            let registration = registration.clone();
-            let label_slot = label_slot.clone();
-            async move {
-                let body = registration
-                    .lock()
-                    .expect("register body")
-                    .clone()
-                    .expect("register ran before poll");
-                let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
-                let public_key_b64 = parsed["public-key"].as_str().unwrap().to_string();
-                let pem = String::from_utf8(B64.decode(public_key_b64).unwrap()).unwrap();
-                let public = RsaPublicKey::from_public_key_pem(&pem).unwrap();
-                let label = label_slot
-                    .lock()
-                    .expect("label")
-                    .clone()
-                    .expect("new_url ran before poll");
+            let body = registration
+                .lock()
+                .expect("register body")
+                .clone()
+                .expect("register ran before poll");
+            let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let public_key_b64 = parsed["public-key"].as_str().unwrap().to_string();
+            let pem = String::from_utf8(B64.decode(public_key_b64).unwrap()).unwrap();
+            let public = RsaPublicKey::from_public_key_pem(&pem).unwrap();
+            let label = label_slot
+                .lock()
+                .expect("label")
+                .clone()
+                .expect("new_url ran before poll");
 
-                let mut aes_key = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut aes_key);
-                let wrapped = public
-                    .encrypt(&mut rand0::rng(), Oaep::new::<Sha256>(), &aes_key)
-                    .unwrap();
-                let interaction = serde_json::json!({
-                    "protocol": "dns",
-                    "unique-id": format!("{label}.{POLL_DOMAIN}"),
-                    "full-id": format!("{label}.{POLL_DOMAIN}"),
-                    "remote-address": "10.0.0.7:53",
-                    "raw-request": ";; QUESTION\nexample.com. IN TXT",
-                    "raw-response": "",
-                    "timestamp": "2026-10-16T00:00:00Z"
-                });
-                let mut plaintext = serde_json::to_vec(&interaction).unwrap();
-                let iv: [u8; 16] = rand::random();
-                let mut cipher = Aes256Ctr::new(&aes_key, &iv);
-                cipher.apply_keystream(&mut plaintext);
-                let mut blob = iv.to_vec();
-                blob.extend_from_slice(&plaintext);
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "data": [B64.encode(&blob)],
-                    "aes_key": B64.encode(&wrapped)
-                }))
-            }
+            let mut aes_key = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut aes_key);
+            let wrapped = public
+                .encrypt(&mut rand0::rng(), Oaep::new::<Sha256>(), &aes_key)
+                .unwrap();
+            let interaction = serde_json::json!({
+                "protocol": "dns",
+                "unique-id": format!("{label}.{POLL_DOMAIN}"),
+                "full-id": format!("{label}.{POLL_DOMAIN}"),
+                "remote-address": "10.0.0.7:53",
+                "raw-request": ";; QUESTION\nexample.com. IN TXT",
+                "raw-response": "",
+                "timestamp": "2026-10-16T00:00:00Z"
+            });
+            let mut plaintext = serde_json::to_vec(&interaction).unwrap();
+            let iv: [u8; 16] = rand::random();
+            let mut cipher = Aes256Ctr::new(&aes_key, &iv);
+            cipher.apply_keystream(&mut plaintext);
+            let mut blob = iv.to_vec();
+            blob.extend_from_slice(&plaintext);
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [B64.encode(&blob)],
+                "aes_key": B64.encode(&wrapped)
+            }))
         })
         .mount(server)
         .await;
