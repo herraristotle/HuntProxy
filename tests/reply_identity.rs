@@ -1,4 +1,5 @@
 //! Credential selection checks use isolated stores and local/mock transports.
+use huntproxy::cookies::validate_cookie_profile;
 use huntproxy::domain::*;
 use huntproxy::fuzzer::{FuzzTemplate, FuzzerService};
 use huntproxy::reply::{PlaceholderKey, ReplyService};
@@ -106,7 +107,7 @@ impl Fixture {
             .unwrap();
         db.upsert_cookie_profile(
             project,
-            huntproxy::cookies::validate_cookie_profile("http://127.0.0.1", "sid=primary".into())
+            validate_cookie_profile("http://127.0.0.1", "sid=primary".into())
                 .unwrap(),
         )
         .await
@@ -114,7 +115,7 @@ impl Fixture {
         db.upsert_named_cookie_profile(
             project,
             "secondary",
-            huntproxy::cookies::validate_cookie_profile("http://127.0.0.1", "sid=secondary".into())
+            validate_cookie_profile("http://127.0.0.1", "sid=secondary".into())
                 .unwrap(),
         )
         .await
@@ -355,7 +356,7 @@ async fn invalid_named_selection_fails_before_traffic() {
     f.db.upsert_named_cookie_profile(
         f.project,
         "other",
-        huntproxy::cookies::validate_cookie_profile("http://127.0.0.2", "sid=other".into())
+        validate_cookie_profile("http://127.0.0.2", "sid=other".into())
             .unwrap(),
     )
     .await
@@ -385,7 +386,7 @@ async fn invalid_named_selection_fails_before_traffic() {
         .unwrap_err()
         .to_string()
         .contains("Cookie override"));
-    let mut expired = huntproxy::cookies::validate_cookie_profile("http://127.0.0.1",
+    let mut expired = validate_cookie_profile("http://127.0.0.1",
         r#"[{"name":"sid","value":"expired","domain":"127.0.0.1","path":"/","expirationDate":4102444800}]"#.into()).unwrap();
     expired.managed_cookies.as_mut().unwrap()[0].expires = Some(1.0);
     f.db.upsert_named_cookie_profile(f.project, "expired", expired)
@@ -586,7 +587,7 @@ async fn fuzz_job_pins_named_cookie_and_preserves_case_provenance() {
     f.db.upsert_named_cookie_profile(
         f.project,
         "secondary",
-        huntproxy::cookies::validate_cookie_profile("http://127.0.0.1", "sid=replaced".into())
+        validate_cookie_profile("http://127.0.0.1", "sid=replaced".into())
             .unwrap(),
     )
     .await

@@ -3,8 +3,8 @@
 
 use huntproxy::dom_monitor::{analyze_dom_events, DOMSinkEvent};
 use huntproxy::domain::ProjectId;
-use huntproxy::fingerprint::fingerprint_exchange;
-use huntproxy::inspector::{build_request, inspect_request};
+use huntproxy::fingerprint::fingerprint_from_response;
+use huntproxy::inspector::{build_request, inspect_request, Param as QueryParam};
 use huntproxy::sequencer::{analyze_tokens, extract_tokens_from_response, TokenSample};
 use huntproxy::storage::Db;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ async fn test_fingerprint_tool() {
         </html>
     "#;
 
-    let result = fingerprint_exchange(&headers, Some(body));
+    let result = fingerprint_from_response(&headers, Some(body));
 
     assert!(result.technologies.iter().any(|t| t.name == "React"));
     assert!(result.technologies.iter().any(|t| t.name == "nginx"));
@@ -56,7 +56,7 @@ async fn test_inspector_round_trip() {
     modified.cookies[0].value = "new_session_token".to_string();
     modified
         .query_params
-        .push(huntproxy::inspector::QueryParam {
+        .push(QueryParam {
             name: "debug".to_string(),
             value: "true".to_string(),
         });
