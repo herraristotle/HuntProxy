@@ -54,12 +54,10 @@ async fn test_inspector_round_trip() {
     // Modify
     let mut modified = parsed.clone();
     modified.cookies[0].value = "new_session_token".to_string();
-    modified
-        .query_params
-        .push(QueryParam {
-            name: "debug".to_string(),
-            value: "true".to_string(),
-        });
+    modified.query_params.push(QueryParam {
+        name: "debug".to_string(),
+        value: "true".to_string(),
+    });
 
     // Rebuild
     let rebuilt = build_request(&modified).unwrap();

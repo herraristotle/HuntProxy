@@ -107,16 +107,14 @@ impl Fixture {
             .unwrap();
         db.upsert_cookie_profile(
             project,
-            validate_cookie_profile("http://127.0.0.1", "sid=primary".into())
-                .unwrap(),
+            validate_cookie_profile("http://127.0.0.1", "sid=primary".into()).unwrap(),
         )
         .await
         .unwrap();
         db.upsert_named_cookie_profile(
             project,
             "secondary",
-            validate_cookie_profile("http://127.0.0.1", "sid=secondary".into())
-                .unwrap(),
+            validate_cookie_profile("http://127.0.0.1", "sid=secondary".into()).unwrap(),
         )
         .await
         .unwrap();
@@ -356,8 +354,7 @@ async fn invalid_named_selection_fails_before_traffic() {
     f.db.upsert_named_cookie_profile(
         f.project,
         "other",
-        validate_cookie_profile("http://127.0.0.2", "sid=other".into())
-            .unwrap(),
+        validate_cookie_profile("http://127.0.0.2", "sid=other".into()).unwrap(),
     )
     .await
     .unwrap();
@@ -587,8 +584,7 @@ async fn fuzz_job_pins_named_cookie_and_preserves_case_provenance() {
     f.db.upsert_named_cookie_profile(
         f.project,
         "secondary",
-        validate_cookie_profile("http://127.0.0.1", "sid=replaced".into())
-            .unwrap(),
+        validate_cookie_profile("http://127.0.0.1", "sid=replaced".into()).unwrap(),
     )
     .await
     .unwrap();
