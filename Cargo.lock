@@ -41,6 +41,7 @@ dependencies = [
  "predicates",
  "proptest",
  "psl",
+ "rand 0.10.2",
  "rand 0.8.7",
  "rcgen",
  "regex",
