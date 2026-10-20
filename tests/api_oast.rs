@@ -87,9 +87,9 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
         .respond_with(move |req: &Request| {
             let slot = registration.clone();
             async move {
-                if let Some(body) = &req.body {
+                if !req.body.is_empty() {
                     *slot.lock().expect("register body") =
-                        Some(String::from_utf8_lossy(body).into_owned());
+                        Some(String::from_utf8_lossy(&req.body).into_owned());
                 }
                 // Mainline contract: a 200 that does not say "registration
                 // successful" is a failed registration.
