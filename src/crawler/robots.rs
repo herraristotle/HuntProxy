@@ -96,7 +96,7 @@ impl RobotsTxt {
             for pattern in &group.allow {
                 if let Some(len) = match_pattern(pattern, &path) {
                     let candidate = (len, 1);
-                    if best_allow.map_or(true, |best| candidate.0 > best.0) {
+                    if best_allow.is_none_or(|best| candidate.0 > best.0) {
                         best_allow = Some(candidate);
                     }
                 }
@@ -104,7 +104,7 @@ impl RobotsTxt {
             for pattern in &group.disallow {
                 if let Some(len) = match_pattern(pattern, &path) {
                     let candidate = (len, 0);
-                    if best_disallow.map_or(true, |best| candidate.0 > best.0) {
+                    if best_disallow.is_none_or(|best| candidate.0 > best.0) {
                         best_disallow = Some(candidate);
                     }
                 }
@@ -153,7 +153,7 @@ fn normalize_pattern(pattern: &str) -> String {
     if pattern.starts_with('/') {
         pattern.to_string()
     } else {
-        format!("/{}", pattern)
+        format!("/{pattern}")
     }
 }
 

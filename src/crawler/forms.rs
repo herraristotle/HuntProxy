@@ -132,7 +132,7 @@ fn extract_form_fields(body: &str) -> Vec<FormField> {
 }
 
 fn extract_attribute(attrs: &str, name: &str) -> Option<String> {
-    let pattern = format!(r#"(?i)\b{}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#, name);
+    let pattern = format!(r#"(?i)\b{name}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#);
     let regex = regex::Regex::new(&pattern).ok()?;
 
     regex.captures(attrs).and_then(|cap| {

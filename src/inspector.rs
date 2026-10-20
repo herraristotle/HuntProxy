@@ -4,7 +4,6 @@
 use crate::domain::{DomainError, DomainResult};
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredRequest {
@@ -120,7 +119,7 @@ pub fn parse_request(raw: &str) -> DomainResult<StructuredRequest> {
     let url = if path.starts_with("http://") || path.starts_with("https://") {
         path
     } else if let Some(h) = host {
-        format!("https://{}{}", h, path)
+        format!("https://{h}{path}")
     } else {
         path
     };
@@ -152,10 +151,10 @@ pub fn build_request(req: &StructuredRequest) -> DomainResult<String> {
     let mut output = String::new();
 
     // Parse URL to get path and host
-    let url = url::Url::parse(&req.url)
-        .map_err(|e| DomainError::invalid(format!("invalid URL: {}", e)))?;
+    let url =
+        url::Url::parse(&req.url).map_err(|e| DomainError::invalid(format!("invalid URL: {e}")))?;
 
-    let path_and_query = if let Some(q) = url.query() {
+    let _path_and_query = if let Some(q) = url.query() {
         format!("{}?{}", url.path(), q)
     } else {
         url.path().to_string()
@@ -195,7 +194,7 @@ pub fn build_request(req: &StructuredRequest) -> DomainResult<String> {
     }
     if !has_host {
         if let Some(host) = url.host_str() {
-            output.push_str(&format!("Host: {}\r\n", host));
+            output.push_str(&format!("Host: {host}\r\n"));
         }
     }
 

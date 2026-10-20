@@ -185,13 +185,13 @@ impl DomainError {
 
 impl From<std::str::Utf8Error> for DomainError {
     fn from(err: std::str::Utf8Error) -> Self {
-        Self::invalid(format!("invalid UTF-8: {}", err))
+        Self::invalid(format!("invalid UTF-8: {err}"))
     }
 }
 
 impl From<serde_json::Error> for DomainError {
     fn from(err: serde_json::Error) -> Self {
-        Self::invalid(format!("JSON error: {}", err))
+        Self::invalid(format!("JSON error: {err}"))
     }
 }
 

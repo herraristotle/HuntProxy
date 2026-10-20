@@ -165,19 +165,18 @@ pub fn analyze_dom_events(events: &[DOMSinkEvent]) -> Vec<DOMFinding> {
         }
 
         // Check for eval with user input patterns
-        if event.sink_type == "eval" {
-            if value_lower.contains("window.location")
+        if event.sink_type == "eval"
+            && (value_lower.contains("window.location")
                 || value_lower.contains("document.cookie")
-                || value_lower.contains("localstorage")
-            {
-                findings.push(DOMFinding {
-                    severity: "medium".to_string(),
-                    sink: "eval".to_string(),
-                    value: event.value.clone(),
-                    description: "eval() with sensitive data access".to_string(),
-                    url: event.url.clone(),
-                });
-            }
+                || value_lower.contains("localstorage"))
+        {
+            findings.push(DOMFinding {
+                severity: "medium".to_string(),
+                sink: "eval".to_string(),
+                value: event.value.clone(),
+                description: "eval() with sensitive data access".to_string(),
+                url: event.url.clone(),
+            });
         }
 
         // Check for postMessage to wildcard origin

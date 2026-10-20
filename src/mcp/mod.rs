@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::domain::*;
 use crate::fuzzer::FuzzTemplate;
 use crate::history::{parse_text_query, query_error, HISTORY_QUERY_SYNTAX};
-use crate::oast::{load_oast_job_context, OastJobContext};
+use crate::oast::load_oast_job_context;
 use crate::policy::{is_sensitive_header, PresentationOptions};
 use crate::storage::CreateCaptureSession;
 use base64::Engine as _;
@@ -40,6 +40,7 @@ trait ToolBackend: Send + Sync {
     /// for backends that cannot probe cheaply (the daemon bridges to the same
     /// server, which rejects unconfigured calls with a clear configuration
     /// error anyway).
+    #[allow(dead_code)]
     async fn oast_listable(&self) -> bool {
         true
     }
@@ -2300,9 +2301,9 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
             let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
                 .map_err(|_| DomainError::internal("invalid request headers"))?;
 
-            let mut raw_request = format!("{} {} HTTP/1.1\r\n", method, target);
+            let mut raw_request = format!("{method} {target} HTTP/1.1\r\n");
             for (name, value) in &headers {
-                raw_request.push_str(&format!("{}: {}\r\n", name, value));
+                raw_request.push_str(&format!("{name}: {value}\r\n"));
             }
             raw_request.push_str("\r\n");
             if let Some(body_bytes) = body {
@@ -2316,7 +2317,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
         }
         "build_request" => {
             let structured: crate::inspector::StructuredRequest = serde_json::from_value(args)
-                .map_err(|e| DomainError::invalid(format!("invalid structured request: {}", e)))?;
+                .map_err(|e| DomainError::invalid(format!("invalid structured request: {e}")))?;
 
             let raw = crate::inspector::build_request(&structured)?;
             Ok(json!({ "request": raw }))
@@ -2458,7 +2459,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 let path: String = row.get(3)?;
                 let status: Option<i64> = row.get(4).ok();
 
-                let label = format!("{} {}{}", method, host, path);
+                let label = format!("{method} {host}{path}");
                 if query.is_empty() || label.to_lowercase().contains(&query.to_lowercase()) {
                     commands.push(json!({
                         "type": "exchange",
@@ -2549,7 +2550,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         let method: String = row.get(0)?;
                         let target: String = row.get(1)?;
                         let headers_json: String = row.get(2)?;
-                        let body: Option<Vec<u8>> = row.get(3).ok();
+                        let _body: Option<Vec<u8>> = row.get(3).ok();
 
                         let headers: Vec<(String, String)> =
                             serde_json::from_str(&headers_json).unwrap_or_default();
@@ -2561,7 +2562,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                             .map(|(_, v)| v.as_str())
                             .unwrap_or("localhost");
 
-                        let url = format!("https://{}{}", host, target);
+                        let url = format!("https://{host}{target}");
 
                         let draft = crate::domain::ReplyDraft {
                             method: Some(method),
@@ -2631,13 +2632,13 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                             .unwrap_or("localhost");
 
                         // Build raw request
-                        let mut raw_req = format!("{} {} HTTP/1.1\r\n", method, target);
+                        let mut raw_req = format!("{method} {target} HTTP/1.1\r\n");
                         for (name, value) in &headers {
-                            raw_req.push_str(&format!("{}: {}\r\n", name, value));
+                            raw_req.push_str(&format!("{name}: {value}\r\n"));
                         }
                         raw_req.push_str("\r\n");
 
-                        let url = format!("https://{}{}", host, target);
+                        let _url = format!("https://{host}{target}");
 
                         // Use reply_send_raw with split writes
                         results.push(json!({

@@ -1295,26 +1295,26 @@ mod tests {
             ("started_at", "time>2026-10-12T00:00:00Z"),
             ("not_a_field", "Supported fields: exchange_id, host"),
         ] {
-            let node = term(field, "eq", "value");
+            let node = term(field, "eq", "value").unwrap();
             assert!(filter_to_sql(&node)
                 .unwrap_err()
                 .to_string()
                 .contains(expected));
         }
-        assert!(filter_to_sql(&term("status", "between", "400"))
+        assert!(filter_to_sql(&term("status", "between", "400").unwrap())
             .unwrap_err()
             .to_string()
             .contains("Text example: status>=400"));
-        assert!(filter_to_sql(&term("request", "eq", "text"))
+        assert!(filter_to_sql(&term("request", "eq", "text").unwrap())
             .unwrap_err()
             .to_string()
             .contains("request:~text"));
-        assert!(filter_to_sql(&term("label", "gt", "reviewed"))
+        assert!(filter_to_sql(&term("label", "gt", "reviewed").unwrap())
             .unwrap_err()
             .to_string()
             .contains("label:reviewed"));
         for field in ["host", "label"] {
-            assert!(filter_to_sql(&term(field, "in", "first"))
+            assert!(filter_to_sql(&term(field, "in", "first").unwrap())
                 .unwrap_err()
                 .to_string()
                 .contains(&format!("{field}:first OR {field}:second")));
@@ -1323,6 +1323,7 @@ mod tests {
             field: "status".into(),
             op: "eq".into(),
             value: serde_json::json!({"value": 400}),
+            subfield: None,
         };
         assert!(filter_to_sql(&bad_value)
             .unwrap_err()

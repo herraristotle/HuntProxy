@@ -131,7 +131,7 @@ pub async fn run_daemon(mut config: Config) -> DomainResult<()> {
 
     // Passive flow triggers: every recorded exchange event queues enabled
     // passive flows for its project.
-    let flow_subscriber = {
+    let _flow_subscriber = {
         let st = state.clone();
         let mut rx = st.events.subscribe();
         let token = shutdown.clone();

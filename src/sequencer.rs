@@ -1,15 +1,13 @@
 //! Token randomness analysis (Sequencer).
 //! Extract session tokens/CSRF tokens from responses, run statistical tests.
 
-use crate::domain::{DomainError, DomainResult, ExchangeId, ProjectId};
-use crate::storage::Db;
+use crate::domain::{DomainError, DomainResult};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const MIN_SAMPLES: usize = 10;
-const MAX_SAMPLES: usize = 10000;
 
 static SESSION_TOKEN_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
     vec![
@@ -358,10 +356,7 @@ pub fn analyze_tokens(samples: &[TokenSample]) -> DomainResult<SequencerAnalysis
         issues.push("Non-uniform 4-bit pattern distribution".to_string());
     }
     if entropy < 3.5 {
-        issues.push(format!(
-            "Low entropy: {:.2} bits/byte (expect >3.5)",
-            entropy
-        ));
+        issues.push(format!("Low entropy: {entropy:.2} bits/byte (expect >3.5)"));
     }
 
     Ok(SequencerAnalysis {

@@ -193,10 +193,9 @@ impl OastProvider for InteractshProvider {
     async fn register(&self, opts: &RegisterOptions) -> DomainResult<ProviderRegistration> {
         // RSA-2048 keygen is 100ms+ of CPU; keep it off the async worker
         // threads (house rule: no blocking calls inside async fns).
-        let (private_pem, public_b64) =
-            tokio::task::spawn_blocking(|| helpers::generate_rsa_keypair())
-                .await
-                .map_err(|e| provider_error(format!("interactsh keygen join: {e}")))??;
+        let (private_pem, public_b64) = tokio::task::spawn_blocking(helpers::generate_rsa_keypair)
+            .await
+            .map_err(|e| provider_error(format!("interactsh keygen join: {e}")))??;
         let correlation_id = helpers::anonymous_correlation_id();
         let secret = uuid::Uuid::new_v4().to_string();
         let first_label = helpers::mint_label(&correlation_id);

@@ -163,7 +163,7 @@ impl CrawlEngine {
                     ));
                 }
                 if request.retry_count > 0 {
-                    let shift = u32::from(request.retry_count.min(8));
+                    let shift = request.retry_count.min(8);
                     let delay = options
                         .retry_delay_ms
                         .saturating_mul(1u64 << shift)
@@ -314,6 +314,7 @@ impl CrawlEngine {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_request(
     db: Arc<Db>,
     reply: Arc<ReplyService>,
@@ -557,10 +558,11 @@ async fn enqueue_discovered_links(
             let form_url = if form.method == "GET" {
                 // For GET forms, append query params
                 let values = forms::generate_form_values(&form);
-                let query: Vec<String> = values.into_iter()
-                    .map(|(k, v)| format!("{}={}",
-                        urlencoding::encode(&k),
-                        urlencoding::encode(&v)))
+                let query: Vec<String> = values
+                    .into_iter()
+                    .map(|(k, v)| {
+                        format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v))
+                    })
                     .collect();
                 if query.is_empty() {
                     form.action.clone()

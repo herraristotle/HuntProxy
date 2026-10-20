@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_sitemap_index() {
+    fn parses_sitemap_index() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <sitemap>
