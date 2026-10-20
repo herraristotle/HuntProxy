@@ -67,6 +67,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../../migrations/016_crawl_jobs.sql"),
     ),
     ("017_oast", include_str!("../../migrations/017_oast.sql")),
+    (
+        "018_passive_scan_alerts",
+        include_str!("../../migrations/018_passive_scan_alerts.sql"),
+    ),
 ];
 
 pub fn schema_version(conn: &Connection) -> DomainResult<i32> {

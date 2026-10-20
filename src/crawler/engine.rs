@@ -30,7 +30,7 @@ use super::types::{
     filter_links_by_strategy, CrawlRequest, CrawlRequestState, CrawlStats, CrawlerOptions,
     LinkStrategy,
 };
-use super::{ajax, discover_links, forms, is_html_mime};
+use super::{ajax, discover_links, forms, is_html_mime, sitemap};
 
 const MAX_HTML_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LINKS_PER_PAGE: usize = 64;
@@ -301,9 +301,10 @@ impl CrawlEngine {
                 Ok(response) if response.status().is_success() => response.text().await.ok(),
                 _ => None,
             };
-            let robots = content
-                .map(|text| RobotsTxt::parse(&text))
-                .unwrap_or_default();
+            let robots = match content {
+                Some(text) => RobotsTxt::parse(&text),
+                None => RobotsTxt::default(),
+            };
             self.robots_cache.insert(host.clone(), Arc::new(robots));
         }
         self.robots_cache
@@ -550,17 +551,16 @@ async fn enqueue_discovered_links(
 
     // Discover forms if enabled
     if options.submit_forms {
-        let forms = forms::extract_forms(base.as_str(), &html);
-        for form in forms {
+        let discovered_forms = forms::extract_forms(base.as_str(), &html);
+        for form in discovered_forms {
             // Generate form submission URL
             let form_url = if form.method == "GET" {
                 // For GET forms, append query params
                 let values = forms::generate_form_values(&form);
-                let query: Vec<String> = values
-                    .into_iter()
-                    .map(|(k, v)| {
-                        format!("{}={}", urlencoding::encode(&k), urlencoding::encode(&v))
-                    })
+                let query: Vec<String> = values.into_iter()
+                    .map(|(k, v)| format!("{}={}",
+                        urlencoding::encode(&k),
+                        urlencoding::encode(&v)))
                     .collect();
                 if query.is_empty() {
                     form.action.clone()
@@ -574,6 +574,22 @@ async fn enqueue_discovered_links(
             };
             discovered.push(form_url);
         }
+    }
+
+    // Sitemap parsing: curated URLs are not subject to the per-page scrape
+    // cap, but still go through scope + filter checks.
+    let mut sitemap_urls: Vec<String> = Vec::new();
+    if options.parse_sitemap
+        && (base.ends_with(".xml") || html.contains("<urlset") || html.contains("<sitemapindex"))
+    {
+        sitemap_urls = if sitemap::is_sitemap_index(&html) {
+            sitemap::parse_sitemap_index(base.as_str(), &html)
+        } else {
+            sitemap::parse_sitemap(base.as_str(), &html)
+                .into_iter()
+                .map(|u| u.loc)
+                .collect()
+        };
     }
 
     let filtered: Vec<String> = discovered
@@ -594,7 +610,30 @@ async fn enqueue_discovered_links(
         })
         .take(MAX_LINKS_PER_PAGE)
         .collect();
-    let filtered = filter_links_by_strategy(filtered, base.as_str(), config.strategy);
+    let mut filtered = filter_links_by_strategy(filtered, base.as_str(), config.strategy);
+
+    let sitemap_filtered: Vec<String> = sitemap_urls
+        .into_iter()
+        .filter(|url| {
+            let Ok(parsed) = Url::parse(url) else {
+                return false;
+            };
+            if !url_is_in_scope(url, &config.scope).unwrap_or(false) {
+                return false;
+            }
+            if let Some(filter) = filter {
+                if !filter_matches_url(filter, &parsed, "GET") {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+    filtered.extend(filter_links_by_strategy(
+        sitemap_filtered,
+        base.as_str(),
+        config.strategy,
+    ));
 
     let mut queue = queue.lock().await;
     for url in filtered {

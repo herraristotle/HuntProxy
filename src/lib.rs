@@ -8,6 +8,7 @@ pub const DISPLAY_NAME: &str = "HuntProxy";
 pub const INTERNAL_PROTOCOL_VERSION: u32 = 1;
 pub const API_VERSION: &str = "v1";
 
+pub mod active_scan;
 pub mod api;
 pub mod app;
 pub mod browser;
@@ -31,6 +32,7 @@ pub mod mcp;
 pub mod oast;
 pub mod page_analyzer;
 pub mod page_title;
+pub mod passive_scan;
 pub mod plugins;
 pub mod policy;
 pub mod proxy;

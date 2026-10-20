@@ -174,10 +174,13 @@ pub struct CrawlerOptions {
     pub filter: Option<String>,
     pub navigation_timeout_ms: u64,
     /// Discover and crawl AJAX/fetch endpoints from JavaScript
+    #[serde(default)]
     pub discover_ajax: bool,
     /// Auto-submit discovered forms with default values
+    #[serde(default)]
     pub submit_forms: bool,
     /// Parse and crawl URLs from sitemap.xml
+    #[serde(default)]
     pub parse_sitemap: bool,
 }
 
