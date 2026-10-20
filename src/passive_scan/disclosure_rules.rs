@@ -22,13 +22,13 @@ static KEY_PATTERNS: &[KeyPattern] = &[
     },
     KeyPattern {
         name: "AWS Secret Access Key",
-        pattern: r"(?i)aws(.{0,20})?['\"][0-9a-zA-Z/+]{40}['\"]",
+        pattern: r#"(?i)aws(.{0,20})?['\"][0-9a-zA-Z/+]{40}['\"]"#,
         severity: RuleSeverity::Critical,
         cwe_id: 798,
     },
     KeyPattern {
         name: "AWS Session Token",
-        pattern: r"(?i)aws.{0,20}session.{0,20}token['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9/+=]{100,}",
+        pattern: r#"(?i)aws.{0,20}session.{0,20}token['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9/+=]{100,}"#,
         severity: RuleSeverity::High,
         cwe_id: 798,
     },
@@ -86,7 +86,7 @@ static KEY_PATTERNS: &[KeyPattern] = &[
     },
     KeyPattern {
         name: "Google OAuth Client Secret",
-        pattern: r"(?i)google.*client.{0,20}secret['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z\-_]{24}",
+        pattern: r#"(?i)google.*client.{0,20}secret['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z\-_]{24}"#,
         severity: RuleSeverity::High,
         cwe_id: 798,
     },
@@ -100,13 +100,13 @@ static KEY_PATTERNS: &[KeyPattern] = &[
     // Azure
     KeyPattern {
         name: "Azure Storage Account Key",
-        pattern: r"(?i)azure.*storage.*key['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z+/=]{88}",
+        pattern: r#"(?i)azure.*storage.*key['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z+/=]{88}"#,
         severity: RuleSeverity::Critical,
         cwe_id: 798,
     },
     KeyPattern {
         name: "Azure Client Secret",
-        pattern: r"(?i)azure.*client.{0,20}secret['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z\-_~.]{34,40}",
+        pattern: r#"(?i)azure.*client.{0,20}secret['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z\-_~.]{34,40}"#,
         severity: RuleSeverity::High,
         cwe_id: 798,
     },
@@ -151,16 +151,61 @@ static KEY_PATTERNS: &[KeyPattern] = &[
         severity: RuleSeverity::High,
         cwe_id: 798,
     },
+    // AI services
+    KeyPattern {
+        name: "OpenAI Project API Key",
+        pattern: r"sk-proj-[A-Za-z0-9_-]{40,}",
+        severity: RuleSeverity::High,
+        cwe_id: 798,
+    },
+    KeyPattern {
+        name: "Anthropic API Key",
+        pattern: r"sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{95}",
+        severity: RuleSeverity::Critical,
+        cwe_id: 798,
+    },
+    KeyPattern {
+        name: "HuggingFace Token",
+        pattern: r"hf_[A-Za-z0-9]{34}",
+        severity: RuleSeverity::High,
+        cwe_id: 798,
+    },
+    KeyPattern {
+        name: "Groq API Key",
+        pattern: r"gsk_[A-Za-z0-9]{52}",
+        severity: RuleSeverity::High,
+        cwe_id: 798,
+    },
+    // CI/CD
+    KeyPattern {
+        name: "Buildkite Token",
+        pattern: r"bkua_[A-Za-z0-9]{40}",
+        severity: RuleSeverity::High,
+        cwe_id: 798,
+    },
+    KeyPattern {
+        name: "CircleCI Token",
+        pattern: r#"(?i)circle[_-]?token['\"]?\s*[:=]\s*['\"]?[a-f0-9]{40}"#,
+        severity: RuleSeverity::High,
+        cwe_id: 798,
+    },
+    // Messaging
+    KeyPattern {
+        name: "Discord Webhook",
+        pattern: r"https://(?:discord|discordapp)\.com/api/webhooks/[0-9]{17,20}/[A-Za-z0-9_-]{60,}",
+        severity: RuleSeverity::High,
+        cwe_id: 200,
+    },
     // Generic patterns
     KeyPattern {
         name: "Generic API Key",
-        pattern: r"(?i)api[_-]?key['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z\-_]{32,}['\"]?",
+        pattern: r#"(?i)api[_-]?key['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z\-_]{32,}['\"]?"#,
         severity: RuleSeverity::Medium,
         cwe_id: 798,
     },
     KeyPattern {
         name: "Generic Secret",
-        pattern: r"(?i)(?:secret|password|passwd|pwd)['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z\-_!@#$%^&*]{16,}['\"]?",
+        pattern: r#"(?i)(?:secret|password|passwd|pwd)['\"]?\s*[:=]\s*['\"]?[0-9a-zA-Z\-_!@#$%^&*]{16,}['\"]?"#,
         severity: RuleSeverity::Medium,
         cwe_id: 798,
     },
