@@ -87,9 +87,15 @@ mod tests {
 
     #[async_trait]
     impl ActiveCheck for CheckA {
-        fn id(&self) -> &str { "a" }
-        fn name(&self) -> &str { "Check A" }
-        fn dependencies(&self) -> Vec<&str> { vec![] }
+        fn id(&self) -> &str {
+            "a"
+        }
+        fn name(&self) -> &str {
+            "Check A"
+        }
+        fn dependencies(&self) -> Vec<&str> {
+            vec![]
+        }
         async fn execute(
             &self,
             _job: &crate::active_scan::job::ActiveScanJob,
@@ -103,9 +109,15 @@ mod tests {
 
     #[async_trait]
     impl ActiveCheck for CheckB {
-        fn id(&self) -> &str { "b" }
-        fn name(&self) -> &str { "Check B" }
-        fn dependencies(&self) -> Vec<&str> { vec!["a"] }
+        fn id(&self) -> &str {
+            "b"
+        }
+        fn name(&self) -> &str {
+            "Check B"
+        }
+        fn dependencies(&self) -> Vec<&str> {
+            vec!["a"]
+        }
         async fn execute(
             &self,
             _job: &crate::active_scan::job::ActiveScanJob,
@@ -119,9 +131,15 @@ mod tests {
 
     #[async_trait]
     impl ActiveCheck for CheckC {
-        fn id(&self) -> &str { "c" }
-        fn name(&self) -> &str { "Check C" }
-        fn dependencies(&self) -> Vec<&str> { vec!["a", "b"] }
+        fn id(&self) -> &str {
+            "c"
+        }
+        fn name(&self) -> &str {
+            "Check C"
+        }
+        fn dependencies(&self) -> Vec<&str> {
+            vec!["a", "b"]
+        }
         async fn execute(
             &self,
             _job: &crate::active_scan::job::ActiveScanJob,
@@ -135,11 +153,8 @@ mod tests {
 
     #[test]
     fn schedule_with_dependencies() {
-        let checks: Vec<Box<dyn ActiveCheck>> = vec![
-            Box::new(CheckC),
-            Box::new(CheckA),
-            Box::new(CheckB),
-        ];
+        let checks: Vec<Box<dyn ActiveCheck>> =
+            vec![Box::new(CheckC), Box::new(CheckA), Box::new(CheckB)];
 
         let scheduler = ScanScheduler::new(checks);
         let policy = ScanPolicy::default();

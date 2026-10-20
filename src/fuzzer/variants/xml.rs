@@ -1,12 +1,11 @@
 //! XML node extraction and injection.
 
 use super::{InjectionPoint, VariantType};
-use regex::Regex;
 use once_cell::sync::Lazy;
+use regex::Regex;
 
-static XML_TAG: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"<([a-zA-Z0-9_-]+)[^>]*>([^<]*)</\1>").expect("valid XML regex")
-});
+static XML_TAG: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<([a-zA-Z0-9_-]+)[^>]*>([^<]*)</\1>").expect("valid XML regex"));
 
 pub struct XmlVariant;
 
@@ -62,8 +61,12 @@ mod tests {
         let points = XmlVariant::extract(body);
 
         assert_eq!(points.len(), 2);
-        assert!(points.iter().any(|p| p.name == "user" && p.original_value == "admin"));
-        assert!(points.iter().any(|p| p.name == "role" && p.original_value == "viewer"));
+        assert!(points
+            .iter()
+            .any(|p| p.name == "user" && p.original_value == "admin"));
+        assert!(points
+            .iter()
+            .any(|p| p.name == "role" && p.original_value == "viewer"));
     }
 
     #[test]

@@ -258,8 +258,9 @@ impl PassiveRule for GraphQlEndpoint {
                 severity: RuleSeverity::Info,
                 confidence: 95,
                 cwe_id: None,
-                description: "GraphQL endpoint observed; worth testing for introspection and injection"
-                    .to_string(),
+                description:
+                    "GraphQL endpoint observed; worth testing for introspection and injection"
+                        .to_string(),
                 evidence: format!("URL: {}", exchange.url),
                 references: vec![],
             });
@@ -270,16 +271,23 @@ impl PassiveRule for GraphQlEndpoint {
             if let Some(body) = exchange.request_body.as_ref() {
                 let text = String::from_utf8_lossy(body);
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if value.get("query").and_then(|q| q.as_str()).is_some_and(|q| {
-                        q.contains("__schema") || q.trim_start().starts_with('{') || q.contains("mutation ")
-                    }) {
+                    if value
+                        .get("query")
+                        .and_then(|q| q.as_str())
+                        .is_some_and(|q| {
+                            q.contains("__schema")
+                                || q.trim_start().starts_with('{')
+                                || q.contains("mutation ")
+                        })
+                    {
                         return Some(PassiveRuleResult {
                             rule_id: format!("{}-body", self.id()),
                             name: "GraphQL Query in Request Body".to_string(),
                             severity: RuleSeverity::Info,
                             confidence: 85,
                             cwe_id: None,
-                            description: "Request body carries a GraphQL query document".to_string(),
+                            description: "Request body carries a GraphQL query document"
+                                .to_string(),
                             evidence: "JSON body with 'query' field of GraphQL shape".to_string(),
                             references: vec![],
                         });

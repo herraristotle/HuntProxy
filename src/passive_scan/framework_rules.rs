@@ -35,7 +35,11 @@ impl PassiveRule for DjangoDebugMode {
             "Exception Value:",
         ];
 
-        let matches: Vec<&str> = indicators.iter().filter(|&&ind| body_str.contains(ind)).copied().collect();
+        let matches: Vec<&str> = indicators
+            .iter()
+            .filter(|&&ind| body_str.contains(ind))
+            .copied()
+            .collect();
 
         if matches.len() >= 3 {
             return Some(PassiveRuleResult {
@@ -77,7 +81,8 @@ impl PassiveRule for LaravelDebugMode {
         let body_str = String::from_utf8_lossy(body);
 
         if body_str.contains("Whoops, looks like something went wrong.")
-            && (body_str.contains("Laravel") || body_str.contains("Illuminate\\")) {
+            && (body_str.contains("Laravel") || body_str.contains("Illuminate\\"))
+        {
             return Some(PassiveRuleResult {
                 rule_id: self.id().to_string(),
                 name: self.name().to_string(),
@@ -142,9 +147,7 @@ impl PassiveRule for SymfonyProfiler {
                 cwe_id: Some(215),
                 description: "Symfony debug toolbar enabled in production.".to_string(),
                 evidence: "Debug toolbar HTML found in response".to_string(),
-                references: vec![
-                    "https://symfony.com/doc/current/profiler.html".to_string(),
-                ],
+                references: vec!["https://symfony.com/doc/current/profiler.html".to_string()],
             });
         }
 
@@ -185,7 +188,10 @@ impl PassiveRule for SpringActuator {
 
         for endpoint in &sensitive_endpoints {
             if url_lower.contains(endpoint) {
-                let severity = if endpoint.contains("heapdump") || endpoint.contains("dump") || endpoint.contains("env") {
+                let severity = if endpoint.contains("heapdump")
+                    || endpoint.contains("dump")
+                    || endpoint.contains("env")
+                {
                     RuleSeverity::High
                 } else {
                     RuleSeverity::Medium
@@ -257,7 +263,8 @@ impl PassiveRule for DotNetTrace {
                 description: "ASP.NET detailed trace information exposed.".to_string(),
                 evidence: "Trace output found in response".to_string(),
                 references: vec![
-                    "https://docs.microsoft.com/en-us/previous-versions/aspnet/bb386420(v=vs.100)".to_string(),
+                    "https://docs.microsoft.com/en-us/previous-versions/aspnet/bb386420(v=vs.100)"
+                        .to_string(),
                 ],
             });
         }
@@ -287,18 +294,19 @@ impl PassiveRule for NodeJsError {
         let body_str = String::from_utf8_lossy(body);
 
         if (body_str.contains("at Object.") || body_str.contains("at Function."))
-            && (body_str.contains("/node_modules/") || body_str.contains("Error: ")) {
+            && (body_str.contains("/node_modules/") || body_str.contains("Error: "))
+        {
             return Some(PassiveRuleResult {
                 rule_id: self.id().to_string(),
                 name: self.name().to_string(),
                 severity: RuleSeverity::Medium,
                 confidence: 85,
                 cwe_id: Some(209), // CWE-209: Information Exposure Through Error Message
-                description: "Node.js stack trace exposed. Reveals application structure and file paths.".to_string(),
+                description:
+                    "Node.js stack trace exposed. Reveals application structure and file paths."
+                        .to_string(),
                 evidence: "Node.js error stack trace detected".to_string(),
-                references: vec![
-                    "https://expressjs.com/en/guide/error-handling.html".to_string(),
-                ],
+                references: vec!["https://expressjs.com/en/guide/error-handling.html".to_string()],
             });
         }
 

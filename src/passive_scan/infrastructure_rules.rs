@@ -44,10 +44,14 @@ impl PassiveRule for DirectoryListingDetection {
                     severity: RuleSeverity::Medium,
                     confidence: 95,
                     cwe_id: Some(548), // CWE-548: Information Exposure Through Directory Listing
-                    description: format!("Directory listing enabled ({}). Exposes file structure.", source),
+                    description: format!(
+                        "Directory listing enabled ({}). Exposes file structure.",
+                        source
+                    ),
                     evidence: format!("Pattern: {}", pattern),
                     references: vec![
-                        "https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload".to_string(),
+                        "https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload"
+                            .to_string(),
                     ],
                 });
             }
@@ -92,7 +96,9 @@ impl PassiveRule for NpmDebugLogDetection {
                 severity: RuleSeverity::Low,
                 confidence: 100,
                 cwe_id: Some(538),
-                description: "NPM debug log exposed. May contain paths, environment info, and error details.".to_string(),
+                description:
+                    "NPM debug log exposed. May contain paths, environment info, and error details."
+                        .to_string(),
                 evidence: format!("Accessible at: {}", exchange.url),
                 references: vec![],
             });
@@ -130,18 +136,18 @@ impl PassiveRule for SecurityTxtDetection {
             return None;
         }
 
-        if url_lower.ends_with("/.well-known/security.txt") || url_lower.ends_with("/security.txt") {
+        if url_lower.ends_with("/.well-known/security.txt") || url_lower.ends_with("/security.txt")
+        {
             return Some(PassiveRuleResult {
                 rule_id: self.id().to_string(),
                 name: self.name().to_string(),
                 severity: RuleSeverity::Info,
                 confidence: 100,
                 cwe_id: None,
-                description: "Security.txt found. Site provides security contact information.".to_string(),
+                description: "Security.txt found. Site provides security contact information."
+                    .to_string(),
                 evidence: format!("Found at: {}", exchange.url),
-                references: vec![
-                    "https://securitytxt.org/".to_string(),
-                ],
+                references: vec!["https://securitytxt.org/".to_string()],
             });
         }
 
@@ -188,7 +194,8 @@ impl PassiveRule for WordPressReadmeDetection {
                     severity: RuleSeverity::Low,
                     confidence: 90,
                     cwe_id: Some(200),
-                    description: "WordPress readme.html exposed. Reveals WordPress version.".to_string(),
+                    description: "WordPress readme.html exposed. Reveals WordPress version."
+                        .to_string(),
                     evidence: format!("Found at: {}", exchange.url),
                     references: vec![],
                 });
@@ -228,7 +235,7 @@ impl PassiveRule for GitLabTokenDetection {
 
         if let Some(matched) = pattern.find(&body_str) {
             let token = matched.as_str();
-            let redacted = format!("{}...{}", &token[..10], &token[token.len()-4..]);
+            let redacted = format!("{}...{}", &token[..10], &token[token.len() - 4..]);
 
             return Some(PassiveRuleResult {
                 rule_id: self.id().to_string(),
@@ -239,7 +246,8 @@ impl PassiveRule for GitLabTokenDetection {
                 description: "GitLab personal access token exposed. Grants API access.".to_string(),
                 evidence: format!("Token: {}", redacted),
                 references: vec![
-                    "https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html".to_string(),
+                    "https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html"
+                        .to_string(),
                 ],
             });
         }
@@ -276,7 +284,9 @@ impl PassiveRule for MissingContentType {
             return None;
         }
 
-        let has_content_type = exchange.response_headers.iter()
+        let has_content_type = exchange
+            .response_headers
+            .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
 
         if !has_content_type {
@@ -286,7 +296,9 @@ impl PassiveRule for MissingContentType {
                 severity: RuleSeverity::Low,
                 confidence: 100,
                 cwe_id: Some(345), // CWE-345: Insufficient Verification of Data Authenticity
-                description: "Response missing Content-Type header. Browser may misinterpret content.".to_string(),
+                description:
+                    "Response missing Content-Type header. Browser may misinterpret content."
+                        .to_string(),
                 evidence: "No Content-Type header present".to_string(),
                 references: vec![],
             });

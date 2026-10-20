@@ -3,16 +3,16 @@
 //! Analyzes every proxied response for common vulnerabilities without sending
 //! additional requests. Emits standardized alerts to the findings database.
 
-mod rules;
+mod advanced_csp_rules;
 mod disclosure_rules;
 mod file_rules;
 mod framework_rules;
-mod advanced_csp_rules;
+mod infrastructure_rules;
 mod injection_rules;
+mod misc_rules;
 mod misconfiguration_rules;
 mod pii_rules;
-mod infrastructure_rules;
-mod misc_rules;
+mod rules;
 
 use crate::domain::*;
 use crate::storage::Db;

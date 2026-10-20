@@ -32,9 +32,8 @@ impl PassiveRule for SstiDetection {
         ];
 
         let url_lower = exchange.url.to_lowercase();
-        let has_test_param = url_lower.contains("{{")
-            || url_lower.contains("${")
-            || url_lower.contains("<%=");
+        let has_test_param =
+            url_lower.contains("{{") || url_lower.contains("${") || url_lower.contains("<%=");
 
         if has_test_param {
             for (pattern, desc) in &patterns {
@@ -184,10 +183,12 @@ impl PassiveRule for LdapInjectionPatterns {
                     severity: RuleSeverity::Medium,
                     confidence: 80,
                     cwe_id: Some(90), // CWE-90: LDAP Injection
-                    description: "LDAP error message in response. May indicate LDAP injection vulnerability.".to_string(),
+                    description:
+                        "LDAP error message in response. May indicate LDAP injection vulnerability."
+                            .to_string(),
                     evidence: format!("Pattern: {}", pattern),
                     references: vec![
-                        "https://owasp.org/www-community/attacks/LDAP_Injection".to_string(),
+                        "https://owasp.org/www-community/attacks/LDAP_Injection".to_string()
                     ],
                 });
             }
@@ -221,7 +222,10 @@ impl PassiveRule for NoSqlInjectionPatterns {
             ("MongoError", "MongoDB"),
             ("CouchDB", "CouchDB"),
             ("com.mongodb", "MongoDB"),
-            ("ReferenceError: $ is not defined", "MongoDB operator injection"),
+            (
+                "ReferenceError: $ is not defined",
+                "MongoDB operator injection",
+            ),
             ("Can't canonicalize query", "MongoDB"),
         ];
 

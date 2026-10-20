@@ -87,19 +87,22 @@ impl ScanPolicy {
     }
 
     pub fn disable_check(&mut self, check_id: &str) {
-        self.check_configs.entry(check_id.to_string())
+        self.check_configs
+            .entry(check_id.to_string())
             .or_insert_with(CheckConfig::default)
             .enabled = false;
     }
 
     pub fn enable_check(&mut self, check_id: &str) {
-        self.check_configs.entry(check_id.to_string())
+        self.check_configs
+            .entry(check_id.to_string())
             .or_insert_with(CheckConfig::default)
             .enabled = true;
     }
 
     pub fn set_check_strength(&mut self, check_id: &str, strength: AttackStrength) {
-        self.check_configs.entry(check_id.to_string())
+        self.check_configs
+            .entry(check_id.to_string())
             .or_insert_with(CheckConfig::default)
             .attack_strength = strength;
     }
@@ -133,7 +136,9 @@ impl ScanPolicy {
 
         self.tech_filter.iter().any(|filter_tech| {
             detected_techs.iter().any(|detected| {
-                detected.to_lowercase().contains(&filter_tech.to_lowercase())
+                detected
+                    .to_lowercase()
+                    .contains(&filter_tech.to_lowercase())
             })
         })
     }
@@ -143,7 +148,6 @@ impl ScanPolicy {
 pub fn default_policies() -> Vec<ScanPolicy> {
     vec![
         ScanPolicy::default(),
-
         ScanPolicy {
             name: "Quick".to_string(),
             default_config: CheckConfig {
@@ -154,7 +158,6 @@ pub fn default_policies() -> Vec<ScanPolicy> {
             check_configs: HashMap::new(),
             tech_filter: Vec::new(),
         },
-
         ScanPolicy {
             name: "Full".to_string(),
             default_config: CheckConfig {

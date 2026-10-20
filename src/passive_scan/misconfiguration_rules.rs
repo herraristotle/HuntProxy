@@ -312,10 +312,9 @@ impl PassiveRule for PermissionsPolicy {
     }
 
     async fn scan(&self, exchange: &PassiveScanExchange) -> Option<PassiveRuleResult> {
-        let has_permissions_policy = exchange
-            .response_headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("permissions-policy") || k.eq_ignore_ascii_case("feature-policy"));
+        let has_permissions_policy = exchange.response_headers.iter().any(|(k, _)| {
+            k.eq_ignore_ascii_case("permissions-policy") || k.eq_ignore_ascii_case("feature-policy")
+        });
 
         if !has_permissions_policy {
             return Some(PassiveRuleResult {

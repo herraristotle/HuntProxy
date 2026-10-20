@@ -246,7 +246,8 @@ impl PassiveRule for ApiKeyDisclosure {
         // Also check headers
         let all_text = format!(
             "{}\n{}",
-            exchange.response_headers
+            exchange
+                .response_headers
                 .iter()
                 .map(|(k, v)| format!("{}: {}", k, v))
                 .collect::<Vec<_>>()
@@ -261,7 +262,7 @@ impl PassiveRule for ApiKeyDisclosure {
 
                     // Redact most of the key for safety
                     let redacted = if evidence.len() > 10 {
-                        format!("{}...{}", &evidence[..5], &evidence[evidence.len()-3..])
+                        format!("{}...{}", &evidence[..5], &evidence[evidence.len() - 3..])
                     } else {
                         "[REDACTED]".to_string()
                     };

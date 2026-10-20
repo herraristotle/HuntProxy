@@ -87,13 +87,16 @@ impl PassiveRule for MissingSecurityHeaders {
 
         let mut missing = Vec::new();
 
-        if !headers_lower.contains("x-frame-options") && !headers_lower.contains("content-security-policy") {
+        if !headers_lower.contains("x-frame-options")
+            && !headers_lower.contains("content-security-policy")
+        {
             missing.push("X-Frame-Options or CSP frame-ancestors");
         }
         if !headers_lower.contains("x-content-type-options") {
             missing.push("X-Content-Type-Options");
         }
-        if !headers_lower.contains("strict-transport-security") && exchange.url.starts_with("https") {
+        if !headers_lower.contains("strict-transport-security") && exchange.url.starts_with("https")
+        {
             missing.push("Strict-Transport-Security");
         }
 
@@ -109,9 +112,7 @@ impl PassiveRule for MissingSecurityHeaders {
             cwe_id: Some(693), // CWE-693: Protection Mechanism Failure
             description: format!("Missing security headers: {}", missing.join(", ")),
             evidence: format!("Response from {}", exchange.url),
-            references: vec![
-                "https://owasp.org/www-project-secure-headers/".to_string(),
-            ],
+            references: vec!["https://owasp.org/www-project-secure-headers/".to_string()],
         })
     }
 }
@@ -165,9 +166,7 @@ impl PassiveRule for WeakCspRule {
             cwe_id: Some(1021), // CWE-1021: Improper Restriction of Rendered UI Layers
             description: format!("Weak CSP: {}", issues.join("; ")),
             evidence: format!("CSP: {}", csp),
-            references: vec![
-                "https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP".to_string(),
-            ],
+            references: vec!["https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP".to_string()],
         })
     }
 }
@@ -262,7 +261,10 @@ impl PassiveRule for InfoDisclosureRule {
 
         let patterns = [
             (r"at\s+[\w.$]+\([^)]*\.java:\d+\)", "Java stack trace"),
-            (r"Fatal error:.*in /[\w/]+\.php on line \d+", "PHP error with path"),
+            (
+                r"Fatal error:.*in /[\w/]+\.php on line \d+",
+                "PHP error with path",
+            ),
             (r"Traceback \(most recent call last\):", "Python traceback"),
             (r"Microsoft.*SQL Server.*Error", "SQL Server error"),
             (r"ORA-\d{5}", "Oracle error"),
@@ -283,7 +285,7 @@ impl PassiveRule for InfoDisclosureRule {
                         description: format!("Potential information disclosure: {}", desc),
                         evidence: evidence.chars().take(200).collect(),
                         references: vec![
-                            "https://owasp.org/www-community/Improper_Error_Handling".to_string(),
+                            "https://owasp.org/www-community/Improper_Error_Handling".to_string()
                         ],
                     });
                 }
@@ -413,7 +415,7 @@ impl PassiveRule for SqlErrorRule {
                         description: format!("SQL error message detected ({})", db_type),
                         evidence: matched.as_str().chars().take(200).collect(),
                         references: vec![
-                            "https://owasp.org/www-community/attacks/SQL_Injection".to_string(),
+                            "https://owasp.org/www-community/attacks/SQL_Injection".to_string()
                         ],
                     });
                 }

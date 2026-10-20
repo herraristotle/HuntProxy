@@ -155,7 +155,9 @@ pub fn extract_injection_points(
                 if let Some(boundary) = extract_boundary(ct) {
                     points.extend(MultipartVariant::extract(body_bytes, &boundary));
                 }
-            } else if ct.contains("application/graphql") || (ct.contains("application/json") && is_graphql_query(body_bytes)) {
+            } else if ct.contains("application/graphql")
+                || (ct.contains("application/json") && is_graphql_query(body_bytes))
+            {
                 points.extend(extract_graphql_variables(body_bytes));
             }
         }
@@ -233,11 +235,13 @@ pub fn apply_payload(
             (url.to_string(), new_headers, body)
         }
         VariantType::Json => {
-            let new_body = JsonVariant::apply(body.as_deref().unwrap_or(&[]), &point.location, payload);
+            let new_body =
+                JsonVariant::apply(body.as_deref().unwrap_or(&[]), &point.location, payload);
             (url.to_string(), headers.to_vec(), Some(new_body))
         }
         VariantType::Xml => {
-            let new_body = XmlVariant::apply(body.as_deref().unwrap_or(&[]), &point.location, payload);
+            let new_body =
+                XmlVariant::apply(body.as_deref().unwrap_or(&[]), &point.location, payload);
             (url.to_string(), headers.to_vec(), Some(new_body))
         }
         VariantType::Multipart => {
@@ -245,7 +249,8 @@ pub fn apply_payload(
             (url.to_string(), headers.to_vec(), new_body)
         }
         VariantType::GraphQl => {
-            let new_body = replace_graphql_variable(body.as_deref().unwrap_or(&[]), &point.name, payload);
+            let new_body =
+                replace_graphql_variable(body.as_deref().unwrap_or(&[]), &point.name, payload);
             (url.to_string(), headers.to_vec(), Some(new_body))
         }
         VariantType::OData => {
@@ -280,7 +285,10 @@ fn replace_url_param(url: &str, param_name: &str, new_value: &str) -> String {
 
 fn replace_path_segment(url: &str, location: &str, new_value: &str) -> String {
     // location format: "path:2"
-    let index: usize = location.strip_prefix("path:").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let index: usize = location
+        .strip_prefix("path:")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
 
     let (base, query) = url.split_once('?').unwrap_or((url, ""));
     let mut parts: Vec<&str> = base.split('/').collect();
@@ -297,7 +305,11 @@ fn replace_path_segment(url: &str, location: &str, new_value: &str) -> String {
     }
 }
 
-fn replace_cookie(headers: &[(String, String)], cookie_name: &str, new_value: &str) -> Vec<(String, String)> {
+fn replace_cookie(
+    headers: &[(String, String)],
+    cookie_name: &str,
+    new_value: &str,
+) -> Vec<(String, String)> {
     headers
         .iter()
         .map(|(k, v)| {
@@ -322,7 +334,11 @@ fn replace_cookie(headers: &[(String, String)], cookie_name: &str, new_value: &s
         .collect()
 }
 
-fn replace_header(headers: &[(String, String)], header_name: &str, new_value: &str) -> Vec<(String, String)> {
+fn replace_header(
+    headers: &[(String, String)],
+    header_name: &str,
+    new_value: &str,
+) -> Vec<(String, String)> {
     headers
         .iter()
         .map(|(k, v)| {
@@ -345,7 +361,10 @@ fn replace_graphql_variable(body: &[u8], var_name: &str, new_value: &str) -> Vec
     };
 
     if let Some(variables) = json.get_mut("variables").and_then(|v| v.as_object_mut()) {
-        variables.insert(var_name.to_string(), serde_json::Value::String(new_value.to_string()));
+        variables.insert(
+            var_name.to_string(),
+            serde_json::Value::String(new_value.to_string()),
+        );
     }
 
     serde_json::to_vec(&json).unwrap_or_else(|_| body.to_vec())

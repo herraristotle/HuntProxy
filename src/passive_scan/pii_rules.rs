@@ -35,7 +35,7 @@ impl PassiveRule for CreditCardDisclosure {
             let card_str = capture.as_str().replace([' ', '-'], "");
 
             if card_str.len() >= 13 && card_str.len() <= 19 && is_luhn_valid(&card_str) {
-                let redacted = format!("{}...{}", &card_str[..4], &card_str[card_str.len()-4..]);
+                let redacted = format!("{}...{}", &card_str[..4], &card_str[card_str.len() - 4..]);
 
                 return Some(PassiveRuleResult {
                     rule_id: self.id().to_string(),
@@ -43,11 +43,10 @@ impl PassiveRule for CreditCardDisclosure {
                     severity: RuleSeverity::Critical,
                     confidence: 90,
                     cwe_id: Some(359), // CWE-359: Exposure of Private Information
-                    description: "Credit card number exposed in response. PCI-DSS violation.".to_string(),
+                    description: "Credit card number exposed in response. PCI-DSS violation."
+                        .to_string(),
                     evidence: format!("Card number: {}", redacted),
-                    references: vec![
-                        "https://www.pcisecuritystandards.org/".to_string(),
-                    ],
+                    references: vec!["https://www.pcisecuritystandards.org/".to_string()],
                 });
             }
         }
@@ -70,7 +69,11 @@ fn is_luhn_valid(card: &str) -> bool {
         .map(|(idx, &digit)| {
             if idx % 2 == 1 {
                 let doubled = digit * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 digit
             }
@@ -126,11 +129,11 @@ impl PassiveRule for SsnDisclosure {
                         severity: RuleSeverity::Critical,
                         confidence: 85,
                         cwe_id: Some(359),
-                        description: "Social Security Number exposed in response. Severe privacy violation.".to_string(),
+                        description:
+                            "Social Security Number exposed in response. Severe privacy violation."
+                                .to_string(),
                         evidence: format!("SSN: {}", redacted),
-                        references: vec![
-                            "https://www.ssa.gov/".to_string(),
-                        ],
+                        references: vec!["https://www.ssa.gov/".to_string()],
                     });
                 }
             }
@@ -165,7 +168,8 @@ impl PassiveRule for EmailDisclosure {
         let body_str = String::from_utf8_lossy(body);
 
         // Email pattern
-        let email_pattern = Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").ok()?;
+        let email_pattern =
+            Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").ok()?;
 
         let mut emails = Vec::new();
         for capture in email_pattern.find_iter(&body_str).take(5) {
@@ -186,7 +190,10 @@ impl PassiveRule for EmailDisclosure {
                 severity: RuleSeverity::Low,
                 confidence: 70,
                 cwe_id: Some(200), // CWE-200: Information Exposure
-                description: format!("Email addresses exposed in response ({} found). May enable spam or phishing.", emails.len()),
+                description: format!(
+                    "Email addresses exposed in response ({} found). May enable spam or phishing.",
+                    emails.len()
+                ),
                 evidence: format!("Emails: {}", emails.join(", ")),
                 references: vec![],
             });
@@ -221,10 +228,22 @@ impl PassiveRule for HashDisclosure {
         let body_str = String::from_utf8_lossy(body);
 
         let hash_patterns = [
-            (r"\$2[ayb]\$\d{2}\$[./A-Za-z0-9]{53}", "bcrypt", RuleSeverity::High),
+            (
+                r"\$2[ayb]\$\d{2}\$[./A-Za-z0-9]{53}",
+                "bcrypt",
+                RuleSeverity::High,
+            ),
             (r"\{SHA\}[A-Za-z0-9+/=]{27,}", "SHA1", RuleSeverity::Medium),
-            (r"\$1\$[./A-Za-z0-9]{8}\$[./A-Za-z0-9]{22}", "MD5", RuleSeverity::Medium),
-            (r"\$6\$[./A-Za-z0-9]{16}\$[./A-Za-z0-9]{86}", "SHA512", RuleSeverity::High),
+            (
+                r"\$1\$[./A-Za-z0-9]{8}\$[./A-Za-z0-9]{22}",
+                "MD5",
+                RuleSeverity::Medium,
+            ),
+            (
+                r"\$6\$[./A-Za-z0-9]{16}\$[./A-Za-z0-9]{86}",
+                "SHA512",
+                RuleSeverity::High,
+            ),
             (r"\b[a-f0-9]{32}\b", "MD5 (hex)", RuleSeverity::Low),
             (r"\b[a-f0-9]{40}\b", "SHA1 (hex)", RuleSeverity::Low),
             (r"\b[a-f0-9]{64}\b", "SHA256 (hex)", RuleSeverity::Medium),
@@ -234,7 +253,7 @@ impl PassiveRule for HashDisclosure {
             if let Ok(re) = Regex::new(pattern) {
                 if let Some(matched) = re.find(&body_str) {
                     let hash = matched.as_str();
-                    let redacted = format!("{}...{}", &hash[..8], &hash[hash.len()-8..]);
+                    let redacted = format!("{}...{}", &hash[..8], &hash[hash.len() - 8..]);
 
                     return Some(PassiveRuleResult {
                         rule_id: format!("{}-{}", self.id(), hash_type.to_lowercase().replace(' ', "-")),
@@ -293,7 +312,8 @@ impl PassiveRule for PrivateIpDisclosure {
                 severity: RuleSeverity::Low,
                 confidence: 85,
                 cwe_id: Some(200),
-                description: "Private IP address exposed. May reveal internal network topology.".to_string(),
+                description: "Private IP address exposed. May reveal internal network topology."
+                    .to_string(),
                 evidence: format!("IP: {}", ip),
                 references: vec![],
             });
@@ -329,7 +349,10 @@ impl PassiveRule for DbConnectionDisclosure {
 
         let db_patterns = [
             (r#"(?i)mongodb://[^/\s]+/[^\s\"'<>]+"#, "MongoDB"),
-            (r#"(?i)mysql://[^/\s]+:[^@\s]+@[^/\s]+/[^\s\"'<>]+"#, "MySQL"),
+            (
+                r#"(?i)mysql://[^/\s]+:[^@\s]+@[^/\s]+/[^\s\"'<>]+"#,
+                "MySQL",
+            ),
             (
                 r#"(?i)postgres(?:ql)?://[^/\s]+:[^@\s]+@[^/\s]+/[^\s\"'<>]+"#,
                 "PostgreSQL",
@@ -354,7 +377,10 @@ impl PassiveRule for DbConnectionDisclosure {
                         severity: RuleSeverity::Critical,
                         confidence: 95,
                         cwe_id: Some(798), // CWE-798: Use of Hard-coded Credentials
-                        description: format!("{} database connection string with credentials exposed.", db_type),
+                        description: format!(
+                            "{} database connection string with credentials exposed.",
+                            db_type
+                        ),
                         evidence: format!("Connection: {}", redacted),
                         references: vec![],
                     });

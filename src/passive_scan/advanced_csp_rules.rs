@@ -34,7 +34,13 @@ impl PassiveRule for MalformedCsp {
             ("default-src;", "Empty directive"),
         ]
         .iter()
-        .filter_map(|(pattern, desc)| if csp.contains(pattern) { Some(*desc) } else { None })
+        .filter_map(|(pattern, desc)| {
+            if csp.contains(pattern) {
+                Some(*desc)
+            } else {
+                None
+            }
+        })
         .collect();
 
         if !issues.is_empty() {
@@ -44,11 +50,12 @@ impl PassiveRule for MalformedCsp {
                 severity: RuleSeverity::Medium,
                 confidence: 90,
                 cwe_id: Some(1021), // CWE-1021: Improper Restriction of Rendered UI Layers
-                description: format!("CSP contains syntax errors: {}. Browser may ignore entire policy.", issues.join(", ")),
+                description: format!(
+                    "CSP contains syntax errors: {}. Browser may ignore entire policy.",
+                    issues.join(", ")
+                ),
                 evidence: format!("CSP: {}", csp),
-                references: vec![
-                    "https://content-security-policy.com/".to_string(),
-                ],
+                references: vec!["https://content-security-policy.com/".to_string()],
             });
         }
 
@@ -190,7 +197,9 @@ impl PassiveRule for AllowlistedScriptCsp {
         ];
 
         let script_src_start = csp.find("script-src")?;
-        let script_src_end = csp[script_src_start..].find(';').unwrap_or(csp.len() - script_src_start);
+        let script_src_end = csp[script_src_start..]
+            .find(';')
+            .unwrap_or(csp.len() - script_src_start);
         let script_src_value = &csp[script_src_start..script_src_start + script_src_end];
 
         let found_risky: Vec<&str> = risky_domains

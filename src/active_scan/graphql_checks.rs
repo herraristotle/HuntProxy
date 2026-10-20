@@ -37,7 +37,12 @@ impl ActiveCheck for GraphQlIntrospectionCheck {
         db: &Arc<Db>,
         reply: &Arc<ReplyService>,
     ) -> DomainResult<Option<CheckResult>> {
-        if !job.base_request.url.to_ascii_lowercase().contains("graphql") {
+        if !job
+            .base_request
+            .url
+            .to_ascii_lowercase()
+            .contains("graphql")
+        {
             return Ok(None);
         }
 
@@ -144,8 +149,9 @@ impl ActiveCheck for HostHeaderInjectionCheck {
                 severity: CheckSeverity::Medium,
                 confidence: 75,
                 cwe_id: Some(644),
-                description: "Host header reflected in response body: possible cache/web-cache deception"
-                    .to_string(),
+                description:
+                    "Host header reflected in response body: possible cache/web-cache deception"
+                        .to_string(),
                 evidence: "Injected Host value echoed in body".to_string(),
                 attack_payload: format!("Host: {}", test_host),
                 injection_point: "Host header".to_string(),
@@ -190,20 +196,36 @@ impl ActiveCheck for SubdomainTakeoverCheck {
 
         // Fingerprints of dangling services still answering for the host.
         const FINGERPRINTS: &[(&str, &str, CheckSeverity)] = &[
-            ("There isn't a GitHub Pages site here", "GitHub Pages", CheckSeverity::High),
+            (
+                "There isn't a GitHub Pages site here",
+                "GitHub Pages",
+                CheckSeverity::High,
+            ),
             ("Repository not found", "GitHub Pages", CheckSeverity::High),
             ("Project not found", "GitLab Pages", CheckSeverity::High),
             ("No such app", "Heroku", CheckSeverity::High),
-            ("The specified bucket does not exist", "AWS S3", CheckSeverity::Critical),
+            (
+                "The specified bucket does not exist",
+                "AWS S3",
+                CheckSeverity::Critical,
+            ),
             ("NoSuchBucket", "AWS S3", CheckSeverity::Critical),
             ("Unrecognized domain", "Fastly", CheckSeverity::High),
-            ("is not a registered InCloud YouTrack", "JetBrains", CheckSeverity::Medium),
+            (
+                "is not a registered InCloud YouTrack",
+                "JetBrains",
+                CheckSeverity::Medium,
+            ),
         ];
 
         for (pattern, service, severity) in FINGERPRINTS {
             if body.contains(pattern) {
                 return Ok(Some(CheckResult {
-                    check_id: format!("{}-{}", self.id(), service.to_ascii_lowercase().replace(' ', "-")),
+                    check_id: format!(
+                        "{}-{}",
+                        self.id(),
+                        service.to_ascii_lowercase().replace(' ', "-")
+                    ),
                     name: format!("Subdomain Takeover: {}", service),
                     severity: *severity,
                     confidence: 80,

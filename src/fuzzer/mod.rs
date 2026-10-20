@@ -18,6 +18,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 mod generators;
+pub mod variants;
 
 pub use generators::{PayloadGenerator, OAST_PLACEHOLDER};
 

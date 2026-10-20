@@ -159,7 +159,10 @@ impl ActiveCheck for LfiCheck {
                     severity: CheckSeverity::High,
                     confidence: 90,
                     cwe_id: Some(98),
-                    description: format!("Local file inclusion in {}: PHP source exposed", point.name),
+                    description: format!(
+                        "Local file inclusion in {}: PHP source exposed",
+                        point.name
+                    ),
                     evidence: "Response contains PHP source code (raw or base64)".to_string(),
                     attack_payload: payload.to_string(),
                     injection_point: point.location.clone(),
@@ -302,7 +305,10 @@ impl ActiveCheck for XxeCheck {
         // node-level payload cannot declare entities.
         let doc = r#"<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>"#;
 
-        for payload in [doc, r#"<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]><foo>&xxe;</foo>"#] {
+        for payload in [
+            doc,
+            r#"<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]><foo>&xxe;</foo>"#,
+        ] {
             if job.is_cancelled() {
                 return Ok(None);
             }
@@ -400,8 +406,7 @@ impl ActiveCheck for SsrfCheck {
             };
 
             // Cloud metadata markers only appear if the target fetched them.
-            if payload.contains("169.254.169.254")
-                && markers.iter().any(|m| resp.body.contains(m))
+            if payload.contains("169.254.169.254") && markers.iter().any(|m| resp.body.contains(m))
             {
                 return Ok(Some(CheckResult {
                     check_id: self.id().to_string(),
@@ -419,7 +424,11 @@ impl ActiveCheck for SsrfCheck {
                 }));
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(strength_delay(job, self.id()))).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(strength_delay(
+                job,
+                self.id(),
+            )))
+            .await;
         }
 
         Ok(None)
@@ -1001,7 +1010,11 @@ impl ActiveCheck for CssInjectionCheck {
                 }
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(strength_delay(job, self.id()))).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(strength_delay(
+                job,
+                self.id(),
+            )))
+            .await;
         }
 
         Ok(None)

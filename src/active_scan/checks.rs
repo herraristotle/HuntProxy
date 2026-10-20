@@ -78,11 +78,7 @@ impl ProbeResponse {
 }
 
 /// Build a `ReplyDraft` with `payload` applied to `point` on the base request.
-pub fn draft_for_payload(
-    job: &ActiveScanJob,
-    point: &InjectionPoint,
-    payload: &str,
-) -> ReplyDraft {
+pub fn draft_for_payload(job: &ActiveScanJob, point: &InjectionPoint, payload: &str) -> ReplyDraft {
     let (url, headers, body) = variants::apply_payload(
         point,
         payload,
@@ -305,7 +301,10 @@ impl ActiveCheck for SqlInjectionCheck {
                     severity: CheckSeverity::High,
                     confidence: 90,
                     cwe_id: Some(89),
-                    description: format!("SQL error triggered in {} by injected syntax", point.name),
+                    description: format!(
+                        "SQL error triggered in {} by injected syntax",
+                        point.name
+                    ),
                     evidence: format!("Database error: {}", pattern),
                     attack_payload: payload.clone(),
                     injection_point: point.location.clone(),
