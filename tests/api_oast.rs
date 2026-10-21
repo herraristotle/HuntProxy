@@ -14,7 +14,6 @@ use rand::RngCore;
 use rand0::rng;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::{Oaep, RsaPublicKey};
-use sha2::Sha256;
 use tempfile::TempDir;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -121,7 +120,7 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
             let mut aes_key = [0u8; 32];
             rand::thread_rng().fill_bytes(&mut aes_key);
             let wrapped = public
-                .encrypt(&mut rand0::rng(), Oaep::new(), &aes_key)
+                .encrypt(&mut rng(), Oaep::new(), &aes_key)
                 .unwrap();
             let interaction = serde_json::json!({
                 "protocol": "dns",
