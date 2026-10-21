@@ -130,8 +130,8 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
                 "timestamp": "2026-10-16T00:00:00Z"
             });
             let mut plaintext = serde_json::to_vec(&interaction).unwrap();
-            let iv: [u8; 16] = rand::random();
-            let mut cipher = Aes256Ctr::new(&aes_key, &iv);
+            let iv = rand::random::<[u8; 16]>();
+            let mut cipher = Aes256Ctr::new_from_slices(&aes_key, &iv).unwrap();
             cipher.apply_keystream(&mut plaintext);
             let mut blob = iv.to_vec();
             blob.extend_from_slice(&plaintext);
@@ -155,7 +155,7 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
     // No pollution: the config seed resolves the interactsh provider.
     let session = state
         .oast
-        .create(project, Some("integration".into()), true, None)
+        .create(project.get(), Some("integration".into()), true, None)
         .await
         .unwrap();
     assert_eq!(session.provider, "interactsh");
@@ -163,7 +163,7 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
 
     let url = state
         .oast
-        .new_url(project, session.session_id, Some(3))
+        .new_url(project.get(), session.session_id, Some(3))
         .await
         .unwrap();
     assert!(
@@ -181,12 +181,12 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
     // Distinct case indexes mint distinct labels.
     let second = state
         .oast
-        .new_url(project, session.session_id, Some(4))
+        .new_url(project.get(), session.session_id, Some(4))
         .await
         .unwrap();
     assert_ne!(second.label, url.label);
 
-    let fresh = state.oast.poll(project, session.session_id).await.unwrap();
+    let fresh = state.oast.poll(project.get(), session.session_id).await.unwrap();
     assert_eq!(
         fresh.len(),
         1,
@@ -200,7 +200,7 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
     assert_eq!(hit.raw_request, ";; QUESTION\nexample.com. IN TXT");
 
     // Re-polling the same server response dedupes at the store: nothing new.
-    let second_poll = state.oast.poll(project, session.session_id).await.unwrap();
+    let second_poll = state.oast.poll(project.get(), session.session_id).await.unwrap();
     assert!(
         second_poll.is_empty(),
         "dedupe across polls must hold: {second_poll:?}"
@@ -210,7 +210,7 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
     let page = state
         .oast
         .interactions(
-            project,
+            project.get(),
             session.session_id,
             Some(url.label.clone()),
             Some(50),
@@ -222,7 +222,7 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
     let page_other_label = state
         .oast
         .interactions(
-            project,
+            project.get(),
             session.session_id,
             Some(second.label.clone()),
             None,
