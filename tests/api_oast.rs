@@ -186,7 +186,11 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
         .unwrap();
     assert_ne!(second.label, url.label);
 
-    let fresh = state.oast.poll(project.get(), session.session_id).await.unwrap();
+    let fresh = state
+        .oast
+        .poll(project.get(), session.session_id)
+        .await
+        .unwrap();
     assert_eq!(
         fresh.len(),
         1,
@@ -200,7 +204,11 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
     assert_eq!(hit.raw_request, ";; QUESTION\nexample.com. IN TXT");
 
     // Re-polling the same server response dedupes at the store: nothing new.
-    let second_poll = state.oast.poll(project.get(), session.session_id).await.unwrap();
+    let second_poll = state
+        .oast
+        .poll(project.get(), session.session_id)
+        .await
+        .unwrap();
     assert!(
         second_poll.is_empty(),
         "dedupe across polls must hold: {second_poll:?}"
