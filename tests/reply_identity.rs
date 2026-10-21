@@ -551,11 +551,7 @@ async fn fuzz_missing_named_identity_does_not_queue_job() {
     let fuzzer = FuzzerService::new(
         f.db.clone(),
         f.reply.clone(),
-        Arc::new(
-            OastService::new(f.db.clone(), OastConfig::default())
-                .await
-                .unwrap(),
-        ),
+        Arc::new(OastService::new(f.db.clone(), OastConfig::default()).unwrap()),
         f.reply.placeholder_key.clone(),
     );
     let template: FuzzTemplate = serde_json::from_value(serde_json::json!({
@@ -576,11 +572,7 @@ async fn fuzz_job_pins_named_cookie_and_preserves_case_provenance() {
     let fuzzer = FuzzerService::new(
         f.db.clone(),
         f.reply.clone(),
-        Arc::new(
-            OastService::new(f.db.clone(), OastConfig::default())
-                .await
-                .unwrap(),
-        ),
+        Arc::new(OastService::new(f.db.clone(), OastConfig::default()).unwrap()),
         f.reply.placeholder_key.clone(),
     );
     let template: FuzzTemplate = serde_json::from_value(serde_json::json!({
