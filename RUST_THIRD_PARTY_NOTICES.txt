@@ -230,7 +230,7 @@ Locked production packages:
 - rustix 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://static.crates.io/crates/rustix/rustix-1.1.4.crate | sha256 b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190
 - rustls 0.23.46 | Apache-2.0 OR ISC OR MIT | https://static.crates.io/crates/rustls/rustls-0.23.46.crate | sha256 48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf
 - rustls-pki-types 1.15.1 | MIT OR Apache-2.0 | https://static.crates.io/crates/rustls-pki-types/rustls-pki-types-1.15.1.crate | sha256 2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96
-- rustls-webpki 0.103.15 | ISC | https://static.crates.io/crates/rustls-webpki/rustls-webpki-0.103.15.crate | sha256 f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2
+- rustls-webpki 0.103.16 | ISC | https://static.crates.io/crates/rustls-webpki/rustls-webpki-0.103.16.crate | sha256 4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281
 - rustversion 1.0.23 | MIT OR Apache-2.0 | https://static.crates.io/crates/rustversion/rustversion-1.0.23.crate | sha256 cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f
 - ryu 1.0.23 | Apache-2.0 OR BSL-1.0 | https://static.crates.io/crates/ryu/ryu-1.0.23.crate | sha256 9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f
 - same-file 1.0.6 | Unlicense/MIT | https://static.crates.io/crates/same-file/same-file-1.0.6.crate | sha256 93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502
@@ -316,9 +316,9 @@ Locked production packages:
 - version_check 0.9.5 | MIT/Apache-2.0 | https://static.crates.io/crates/version_check/version_check-0.9.5.crate | sha256 0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a
 - walkdir 2.5.0 | Unlicense/MIT | https://static.crates.io/crates/walkdir/walkdir-2.5.0.crate | sha256 29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b
 - want 0.3.1 | MIT | https://static.crates.io/crates/want/want-0.3.1.crate | sha256 bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e
-- webpki-root-certs 1.0.9 | CDLA-Permissive-2.0 | https://static.crates.io/crates/webpki-root-certs/webpki-root-certs-1.0.9.crate | sha256 b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b
+- webpki-root-certs 1.0.10 | CDLA-Permissive-2.0 | https://static.crates.io/crates/webpki-root-certs/webpki-root-certs-1.0.10.crate | sha256 58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb
 - webpki-roots 0.26.11 | CDLA-Permissive-2.0 | https://static.crates.io/crates/webpki-roots/webpki-roots-0.26.11.crate | sha256 521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9
-- webpki-roots 1.0.9 | CDLA-Permissive-2.0 | https://static.crates.io/crates/webpki-roots/webpki-roots-1.0.9.crate | sha256 7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a
+- webpki-roots 1.0.10 | CDLA-Permissive-2.0 | https://static.crates.io/crates/webpki-roots/webpki-roots-1.0.10.crate | sha256 1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9
 - winnow 0.6.26 | MIT | https://static.crates.io/crates/winnow/winnow-0.6.26.crate | sha256 1e90edd2ac1aa278a5c4599b1d89cf03074b610800f866d4026dc199d7929a28
 - winnow 0.7.15 | MIT | https://static.crates.io/crates/winnow/winnow-0.7.15.crate | sha256 df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945
 - wreq 6.0.0-rc.29 | Apache-2.0 | https://static.crates.io/crates/wreq/wreq-6.0.0-rc.29.crate | sha256 3f0eba5f5814a94e5f1a99156f187133464e525b66bdbc69a9627d46530af2e1
@@ -5807,7 +5807,7 @@ THE SOFTWARE.
 
 --- Text 092 (sha256 5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a) ---
 Used by:
-- rustls-webpki 0.103.15 (LICENSE)
+- rustls-webpki 0.103.16 (LICENSE)
 
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:
@@ -13255,9 +13255,9 @@ DEALINGS IN THE SOFTWARE.
 
 --- Text 211 (sha256 e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8) ---
 Used by:
-- webpki-root-certs 1.0.9 (LICENSE)
+- webpki-root-certs 1.0.10 (LICENSE)
 - webpki-roots 0.26.11 (LICENSE)
-- webpki-roots 1.0.9 (LICENSE)
+- webpki-roots 1.0.10 (LICENSE)
 
 # Community Data License Agreement - Permissive - Version 2.0
 
