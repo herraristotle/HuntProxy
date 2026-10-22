@@ -39,7 +39,15 @@ static PATTERNS: Lazy<Vec<Pattern>> = Lazy::new(|| {
             category: "JavaScript framework",
             header_checks: vec![],
             html_patterns: vec![r"data-reactroot", r"data-react-", r"__REACT_"],
-            js_patterns: vec![r"React\.version", r"react-dom", r"_reactRootContainer"],
+            js_patterns: vec![
+                r"React\.version",
+                r"react-dom",
+                r"_reactRootContainer",
+                // Bundled build filenames (`react.production.min.js`,
+                // `react-dom.development.js`) are the usual signal when the
+                // page ships no inline React globals.
+                r"react(?:-dom)?(?:\.production|\.development)?(?:\.min)?\.js",
+            ],
             version_pattern: Some(r#"React\.version\s*=\s*["']([0-9.]+)["']"#),
         },
         Pattern {

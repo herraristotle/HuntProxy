@@ -215,7 +215,10 @@ async fn test_command_palette_indexing() {
     let tools = [
         ("fingerprint", "Tech stack detection"),
         ("dashboard", "Multi-plugin orchestration"),
-        ("sequencer_analyze", "Token randomness tests"),
+        // Not "Token randomness tests": "randomness" contains "dom", so a
+        // substring search for "dom" matched two tools and made the assertion
+        // below depend on an accidental substring.
+        ("sequencer_analyze", "Token entropy tests"),
         ("dom_monitor_start", "Inject sink monitoring"),
     ];
 
