@@ -14,6 +14,7 @@ use rand::RngCore;
 use rand0::rng;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::{Oaep, RsaPublicKey};
+use sha2_11::Sha256;
 use tempfile::TempDir;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -119,7 +120,7 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
 
             let mut aes_key = [0u8; 32];
             rand::thread_rng().fill_bytes(&mut aes_key);
-            let wrapped = public.encrypt(&mut rng(), Oaep::new(), &aes_key).unwrap();
+            let wrapped = public.encrypt(&mut rng(), Oaep::<Sha256>::new(), &aes_key).unwrap();
             let interaction = serde_json::json!({
                 "protocol": "dns",
                 "unique-id": format!("{label}.{POLL_DOMAIN}"),
@@ -253,10 +254,10 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
         })
         .await
         .unwrap();
-    assert!(state.oast.poll(other.id, session.session_id).await.is_err());
+    assert!(state.oast.poll(other.id.get(), session.session_id).await.is_err());
     assert!(state
         .oast
-        .interactions(other.id, session.session_id, None, None, None)
+        .interactions(other.id.get(), session.session_id, None, None, None)
         .await
         .is_err());
 }
