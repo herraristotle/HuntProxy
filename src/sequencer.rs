@@ -77,7 +77,10 @@ pub fn extract_tokens_from_response(
         if name.eq_ignore_ascii_case("set-cookie") {
             if let Some((cookie_name, cookie_value)) = value.split_once('=') {
                 let val = cookie_value.split(';').next().unwrap_or(cookie_value);
-                if val.len() >= 16
+                // A Set-Cookie value is a session token by definition; the
+                // 16-char heuristic only guards body/header scraping where a
+                // match could be an ordinary word.
+                if !val.is_empty()
                     && val
                         .chars()
                         .all(|c| c.is_alphanumeric() || c == '-' || c == '_')

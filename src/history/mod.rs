@@ -358,7 +358,7 @@ fn compile_term(
         // exchanges with no status); plain `!=` would silently drop them.
         "ne" => {
             binds.push(value_as_string(field, value)?);
-            Ok(format!("{c}!=?{}", binds.len()))
+            Ok(format!("{c} IS NOT ?{}", binds.len()))
         }
         "gt" => {
             binds.push(value_as_string(field, value)?);

@@ -44,11 +44,16 @@ impl XmlVariant {
         };
 
         let tag_name = location.strip_prefix("xml:").unwrap_or(location);
-        // Use a simpler regex without backreferences
-        let tag_regex = Regex::new(&format!(r"(<{tag_name}[^>]*>)([^<]*)(</{tag_name}>)"))
-            .unwrap_or_else(|_| Regex::new(r"dummy").unwrap());
+        let Ok(tag_regex) = Regex::new(&format!(r"(<{tag_name}[^>]*>)([^<]*)(</{tag_name}>)"))
+        else {
+            return body.to_vec();
+        };
 
-        let result = tag_regex.replace(text, format!("$1{payload}$3"));
+        // Substitute via closure: a string replacement would interpret `$1`/`$3`
+        // in the *payload* as capture references and corrupt the payload.
+        let result = tag_regex.replace(text, |caps: &regex::Captures<'_>| {
+            format!("{}{}{}", &caps[1], payload, &caps[3])
+        });
         result.as_bytes().to_vec()
     }
 }

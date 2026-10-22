@@ -1433,7 +1433,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/register"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "message": "registration successful"
+            })))
             .expect(1)
             .mount(&server)
             .await;
@@ -1522,7 +1524,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/register"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "message": "registration successful"
+            })))
             .mount(&server)
             .await;
         // Mainline server wraps storage misses as HTTP 400 + storage text.

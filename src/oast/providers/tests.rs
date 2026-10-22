@@ -221,6 +221,7 @@ async fn interactsh_register_sends_mainline_shape_and_auth_header() {
         .and(body_string_contains("\"correlation-id\""))
         .and(body_string_contains("\"secret-key\""))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "message": "registration successful",
             "domains": ["oast.example.com"]
         })))
         .mount(&server)

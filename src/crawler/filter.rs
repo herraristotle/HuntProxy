@@ -75,7 +75,17 @@ pub fn filter_matches_url(filter: &FilterNode, url: &Url, method: &str) -> bool 
                 "host" => term_matches(op, value, url.host_str().unwrap_or_default()),
                 "authority" => term_matches(op, value, url.host_str().unwrap_or_default()),
                 "path" => term_matches(op, value, url.path()),
-                "query" => term_matches(op, value, url.query().unwrap_or_default()),
+                // `query:id=*5` is a glob on the query string: literal parts with
+                // `*` standing for any run of characters.
+                "query" => {
+                    let actual = url.query().unwrap_or_default();
+                    let pattern = value_str(value);
+                    if op == "eq" && pattern.contains('*') {
+                        glob_matches(&pattern, actual)
+                    } else {
+                        term_matches(op, value, actual)
+                    }
+                }
                 "method" => term_matches(op, value, method),
                 _ => false,
             }
@@ -118,8 +128,31 @@ fn value_str(value: &serde_json::Value) -> String {
     }
 }
 
-fn compile_regex(value: &serde_json::Value) -> Option<Regex> {
-    let pattern = value_str(value);
+/// `*` glob match against a whole string; every other character is literal.
+fn glob_matches(pattern: &str, actual: &str) -> bool {
+    if !pattern.contains('*') {
+        return pattern == actual;
+    }
+    let parts: Vec<&str> = pattern.split('*').collect();
+    let first = parts[0];
+    let last = parts[parts.len() - 1];
+    if first.len() + last.len() > actual.len()
+        || !actual.starts_with(first)
+        || !actual.ends_with(last)
+    {
+        return false;
+    }
+    let mut rest = &actual[first.len()..actual.len() - last.len()];
+    for part in &parts[1..parts.len() - 1] {
+        match rest.find(part) {
+            Some(index) => rest = &rest[index + part.len()..],
+            None => return false,
+        }
+    }
+    true
+}
+
+fn compile_regex(value: &serde_json::Value) -> Option<Regex> {    let pattern = value_str(value);
     Regex::new(&pattern).ok()
 }
 

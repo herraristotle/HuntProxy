@@ -46,11 +46,13 @@ fn extract_field_name(part: &str) -> Option<String> {
 }
 
 fn extract_field_value(part: &str) -> Option<String> {
-    let lines: Vec<&str> = part.lines().collect();
-    let mut in_body = false;
+    // Each part begins with a blank line (the `\r\n` after the boundary), so
+    // the header/body separator is the *second* blank line, not the first.
+    let mut lines = part.lines().skip_while(|line| line.trim().is_empty());
     let mut value_lines = Vec::new();
+    let mut in_body = false;
 
-    for line in lines {
+    for line in lines.by_ref() {
         if in_body {
             value_lines.push(line);
         } else if line.is_empty() {

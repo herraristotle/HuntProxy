@@ -778,8 +778,12 @@ mod tests {
         assert!(validate_relative(Path::new("safe/project.sqlite3")).is_ok());
     }
 
-    fn test_config(root: &Path) -> Config {
-        let mut config = Config::default();
+    /// A schema version newer than this binary, so "future bundle" paths trip.
+    fn after_local_schema() -> i32 {
+        crate::storage::current_schema_version() + 1
+    }
+
+    fn test_config(root: &Path) -> Config {        let mut config = Config::default();
         config.data_dir = root.join("data");
         config.spool_dir = config.data_dir.join("spool");
         config.export_dir = config.data_dir.join("exports");
@@ -1158,7 +1162,16 @@ mod tests {
         let archive = rusqlite::Connection::open(unpacked.join("project.sqlite3")).unwrap();
         archive
             .execute_batch(
-                "ALTER TABLE browser_sessions DROP COLUMN profile_name; PRAGMA user_version=14;",
+                "ALTER TABLE browser_sessions DROP COLUMN profile_name;
+                 DROP TABLE flows;
+                 DROP TABLE passive_scan_alerts;
+                 DROP TABLE crawl_jobs;
+                 DROP TABLE oast_interactions;
+                 DROP TABLE oast_labels;
+                 DROP TABLE oast_sessions;
+                 DROP TABLE oast_providers;
+                 ALTER TABLE exchanges DROP COLUMN color;
+                 PRAGMA user_version=14;",
             )
             .unwrap();
         drop(archive);
@@ -1234,7 +1247,7 @@ mod tests {
         let manifest_path = unpacked.join("manifest.json");
         let mut manifest: BundleManifest =
             serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-        manifest.source_schema = 16;
+        manifest.source_schema = after_local_schema();
         manifest.database_sha256 = "00".repeat(32);
         write_private_file(
             &manifest_path,
@@ -1254,9 +1267,13 @@ mod tests {
         assert_no_import_staging(&destination_config);
 
         let archive = rusqlite::Connection::open(unpacked.join("project.sqlite3")).unwrap();
-        archive.pragma_update(None, "user_version", 16).unwrap();
+        archive
+            .pragma_update(None, "user_version", after_local_schema())
+            .unwrap();
         drop(archive);
-        update_bundle_manifest(&unpacked, |manifest| manifest.source_schema = 16);
+        update_bundle_manifest(&unpacked, |manifest| {
+            manifest.source_schema = after_local_schema()
+        });
         let future = directory.path().join("future-schema.huntproxy");
         repack_bundle(&unpacked, &future);
         let error = destination_db

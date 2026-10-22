@@ -63,7 +63,18 @@ impl Db {
     }
 
     pub async fn open_in_memory() -> DomainResult<Self> {
-        let pool_cfg = PoolConfig::new(":memory:");
+        // `:memory:` databases are per-connection, so a pooled connection would
+        // hand out a fresh empty database each time. Serve a single connection
+        // from a shared-cache URI so every task sees the same in-memory schema.
+        let name = format!(
+            "file:huntproxy-mem-{}?mode=memory&cache=shared",
+            uuid::Uuid::new_v4()
+        );
+        let mut pool_cfg = PoolConfig::new(name);
+        pool_cfg.pool = Some(deadpool_sqlite::PoolConfig {
+            max_size: 1,
+            ..Default::default()
+        });
         let pool = pool_cfg
             .create_pool(Runtime::Tokio1)
             .map_err(|e| DomainError::new(ErrorCode::StorageError, e.to_string()))?;
@@ -380,7 +391,7 @@ mod tests {
         config.ensure_layout().unwrap();
         let database = Connection::open(config.db_path()).unwrap();
         migrations::migrate(&database).unwrap();
-        database.execute_batch("ALTER TABLE browser_sessions DROP COLUMN profile_name; PRAGMA user_version=14; CREATE TABLE saved_fixture(name TEXT); INSERT INTO saved_fixture VALUES ('Existing project');").unwrap();
+        database.execute_batch("ALTER TABLE browser_sessions DROP COLUMN profile_name; DROP TABLE flows; DROP TABLE passive_scan_alerts; DROP TABLE crawl_jobs; DROP TABLE oast_interactions; DROP TABLE oast_labels; DROP TABLE oast_sessions; DROP TABLE oast_providers; ALTER TABLE exchanges DROP COLUMN color; PRAGMA user_version=14; CREATE TABLE saved_fixture(name TEXT); INSERT INTO saved_fixture VALUES ('Existing project');").unwrap();
         config
     }
 
@@ -389,7 +400,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let config = legacy_database(directory.path());
         let database = Db::open(&config).await.unwrap();
-        assert_eq!(database.schema_version().await.unwrap(), 15);
+        assert_eq!(
+            database.schema_version().await.unwrap(),
+            migrations::current_schema_version()
+        );
         let backups = config.runtime_dir.join("migration-backups");
         let paths: Vec<_> = std::fs::read_dir(&backups)
             .unwrap()

@@ -43,9 +43,14 @@ pub fn extract_ajax_endpoints(base_url: &str, content: &str) -> Vec<AjaxEndpoint
             for cap in re.captures_iter(content) {
                 if let Some(url) = cap.get(1) {
                     let url_str = url.as_str();
-                    if let Some(endpoint) =
-                        resolve_endpoint(&base, url_str, AjaxSource::FetchCall, &mut seen)
-                    {
+                    // Classify before dedup: a fetch('/graphql') would otherwise
+                    // occupy the URL and the later API-route pass could not tag it.
+                    let source = if url_str.contains("graphql") {
+                        AjaxSource::GraphqlEndpoint
+                    } else {
+                        AjaxSource::FetchCall
+                    };
+                    if let Some(endpoint) = resolve_endpoint(&base, url_str, source, &mut seen) {
                         endpoints.push(endpoint);
                     }
                 }
