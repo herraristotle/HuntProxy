@@ -182,9 +182,7 @@ fn validate_filter_depth(node: &FilterNode, depth: usize, terms: &mut usize) -> 
                     validate_regex_pattern(pattern)?;
                 }
                 "in" => {
-                    let list = value
-                        .as_array()
-                        .ok_or_else(|| in_value_error(field))?;
+                    let list = value.as_array().ok_or_else(|| in_value_error(field))?;
                     if list.is_empty() {
                         return Err(DomainError::invalid("in operator requires a value"));
                     }
