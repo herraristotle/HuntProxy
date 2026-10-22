@@ -120,7 +120,9 @@ async fn mount_provider_mocks(server: &MockServer, capture: &Capture) {
 
             let mut aes_key = [0u8; 32];
             rand::thread_rng().fill_bytes(&mut aes_key);
-            let wrapped = public.encrypt(&mut rng(), Oaep::<Sha256>::new(), &aes_key).unwrap();
+            let wrapped = public
+                .encrypt(&mut rng(), Oaep::<Sha256>::new(), &aes_key)
+                .unwrap();
             let interaction = serde_json::json!({
                 "protocol": "dns",
                 "unique-id": format!("{label}.{POLL_DOMAIN}"),
