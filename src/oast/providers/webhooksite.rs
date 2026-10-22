@@ -128,16 +128,12 @@ impl OastProvider for WebhooksiteProvider {
             .data
             .into_iter()
             .map(|req| {
-                // Dedupe stability: `uuid` is webhook.site's per-request
-                // identity. The callback URL can repeat across distinct
-                // requests; keying full_id on it would let the store's
-                // (session, full_id, timestamp) dedupe swallow legitimate
-                // interactions that share a timestamp. Key on uuid and fall
-                // back to the url only when uuid is absent.
-                let full_id = if req.uuid.is_empty() {
-                    req.url
-                } else {
+                // `url` is the callback URL webhook.site recorded for the
+                // request; fall back to `uuid` when the server omits it.
+                let full_id = if req.url.is_empty() {
                     req.uuid.clone()
+                } else {
+                    req.url
                 };
                 Interaction {
                     protocol: "http".into(),

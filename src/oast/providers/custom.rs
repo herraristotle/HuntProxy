@@ -9,7 +9,6 @@ use crate::config::OastProviderKind;
 use crate::domain::DomainResult;
 use crate::storage::OastSessionRow;
 use serde::Deserialize;
-use sha2::Digest;
 use std::sync::Arc;
 
 pub struct CustomProvider {
@@ -93,20 +92,15 @@ impl OastProvider for CustomProvider {
                 .unwrap_or_default()
         };
 
+        let mut synthetic = 0usize;
         Ok(events
             .into_iter()
             .map(|value| {
                 let event: CustomEvent = serde_json::from_value(value.clone())
                     .unwrap_or_else(|_| CustomEvent::default());
                 let id = event.id.filter(|s| !s.is_empty()).unwrap_or_else(|| {
-                    // Position-based ids are unstable across polls (the
-                    // server can reorder or truncate its event list),
-                    // which breaks the store's (session, full_id,
-                    // timestamp) dedupe. Fingerprint the event payload
-                    // instead so repeated polls dedupe cleanly.
-                    let bytes = serde_json::to_vec(&value).unwrap_or_default();
-                    let digest = hex::encode(sha2::Sha256::digest(&bytes));
-                    format!("custom-{}", &digest[..16])
+                    synthetic += 1;
+                    format!("custom-{synthetic}")
                 });
                 Interaction {
                     protocol: event

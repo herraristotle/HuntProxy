@@ -411,6 +411,19 @@ fn compile_term(
                 Ok(format!("{c} IS NULL"))
             }
         }
+        // `X REGEXP Y` is sugar for regexp(Y, X): pattern first, value second.
+        "regex" => {
+            let pattern = value_as_string(field, value)?;
+            validate_regex_pattern(&pattern)?;
+            binds.push(pattern);
+            Ok(format!("{c} REGEXP ?{}", binds.len()))
+        }
+        "nregex" => {
+            let pattern = value_as_string(field, value)?;
+            validate_regex_pattern(&pattern)?;
+            binds.push(pattern);
+            Ok(format!("NOT ({c} REGEXP ?{})", binds.len()))
+        }
         other => Err(query_error(format!("unsupported op {other}"))),
     }
 }
@@ -440,10 +453,13 @@ fn compile_request_term(
         binds.push(raw);
         "huntproxy_body_regex"
     } else {
+        // Keep both the LIKE pattern and the bare needle: the body helper
+        // takes the needle, the column/header comparisons take the pattern.
         binds.push(format!("%{}%", escape_like(&raw)));
+        binds.push(raw);
         "huntproxy_body_contains"
     };
-    let pattern_index = binds.len();
+    let pattern_index = binds.len() - usize::from(op == "contains");
     let body_index = binds.len();
     // LIKE needs the ESCAPE clause; REGEXP does not.
     let target_op = if op == "regex" {
@@ -861,9 +877,35 @@ impl QueryParser {
 
     fn parse_primary(&mut self) -> DomainResult<FilterNode> {
         match self.next() {
-            Some(QueryToken::Text(text)) => parse_one_term(&text).map_err(|error| {
-                query_error(format!("filter parse error at `{text}`: {error}"))
-            }),
+            Some(QueryToken::Text(text)) => {
+                // `has(field)` / `missing(field)`: presence test. The tokenizer
+                // splits on parentheses, so the field arrives as its own token.
+                if matches!(self.peek(), Some(QueryToken::LeftParen))
+                    && (text.eq_ignore_ascii_case("has") || text.eq_ignore_ascii_case("missing"))
+                {
+                    let present = text.eq_ignore_ascii_case("has");
+                    self.position += 1; // consume `(`
+                    let field = match self.next() {
+                        Some(QueryToken::Text(field)) => field,
+                        _ => {
+                            return Err(query_error(format!(
+                                "{text}() needs a field name; example: has(error)"
+                            )))
+                        }
+                    };
+                    if !matches!(self.next(), Some(QueryToken::RightParen)) {
+                        return Err(query_error(format!(
+                            "{text}() takes exactly one field name; example: has(error)"
+                        )));
+                    }
+                    return make_term(&field, "exists", serde_json::json!(present))
+                        .map_err(|error| {
+                            query_error(format!("filter parse error at `{field}`: {error}"))
+                        });
+                }
+                parse_one_term(&text)
+                    .map_err(|error| query_error(format!("filter parse error at `{text}`: {error}")))
+            }
             Some(QueryToken::LeftParen) => {
                 let node = self.parse_or()?;
                 match self.next() {
@@ -965,12 +1007,11 @@ fn parse_one_term(part: &str) -> Result<FilterNode, String> {
         if let Some(v) = rest.strip_suffix('*') {
             return term(field, "starts_with", v);
         }
-        if rest.starts_with(['>', '<']) || rest.starts_with("!=") || rest.starts_with("=~") {
-            return Err(
-                "comparison and regex operators are written without a colon, \
-                 for example status!=404"
-                    .into(),
-            );
+        if let Some((op, value)) = colon_comparison(rest) {
+            // `status:>=400` must fail validation (not parsing) so the
+            // correction can say "remove the colon": keep the colon on the
+            // field and let unknown_field_error build the message.
+            return make_term(&format!("{field}:"), op, serde_json::json!(value));
         }
         return term(field, "eq", rest);
     }
@@ -985,6 +1026,23 @@ fn parse_one_term(part: &str) -> Result<FilterNode, String> {
             .map(|field| term(field, "contains", part).expect("bare fan-out fields are valid"))
             .collect(),
     })
+}
+
+/// Operators written after a value colon, which the docs forbid. Returns the
+/// canonical op and the value so the error can name the colon as the fix.
+fn colon_comparison(rest: &str) -> Option<(&'static str, &str)> {
+    [
+        (">=", "gte"),
+        ("<=", "lte"),
+        ("!=~", "nregex"),
+        ("!=", "ne"),
+        ("=~", "regex"),
+        (">", "gt"),
+        ("<", "lt"),
+    ]
+    .into_iter()
+    .find(|(symbol, _)| rest.starts_with(symbol))
+    .map(|(symbol, op)| (op, &rest[symbol.len()..]))
 }
 
 fn parse_in_list(field: &str, inner: &str) -> Result<FilterNode, String> {
@@ -1590,8 +1648,13 @@ mod tests {
         // [name] scope only makes sense with a value operator.
         assert!(parse_one_term(r#"host["x"]:y"#).is_err());
         assert!(parse_one_term(r#"header[""]:x"#).is_err());
-        // Comparison operators are not allowed after the value colon.
-        assert!(parse_one_term("status:!=404").is_err());
+        // Comparison operators are not allowed after the value colon: parsing
+        // keeps them so validation can name the colon as the fix.
+        let colon_op = parse_one_term("status:!=404").unwrap();
+        assert!(filter_to_sql(&colon_op)
+            .unwrap_err()
+            .to_string()
+            .contains("remove the colon"));
         let filter = parse_text_query("header:~x").unwrap();
         filter_to_sql(&filter).unwrap();
     }

@@ -783,7 +783,8 @@ mod tests {
         crate::storage::current_schema_version() + 1
     }
 
-    fn test_config(root: &Path) -> Config {        let mut config = Config::default();
+    fn test_config(root: &Path) -> Config {
+        let mut config = Config::default();
         config.data_dir = root.join("data");
         config.spool_dir = config.data_dir.join("spool");
         config.export_dir = config.data_dir.join("exports");

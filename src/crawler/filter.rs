@@ -152,7 +152,8 @@ fn glob_matches(pattern: &str, actual: &str) -> bool {
     true
 }
 
-fn compile_regex(value: &serde_json::Value) -> Option<Regex> {    let pattern = value_str(value);
+fn compile_regex(value: &serde_json::Value) -> Option<Regex> {
+    let pattern = value_str(value);
     Regex::new(&pattern).ok()
 }
 
