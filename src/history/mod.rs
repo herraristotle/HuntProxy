@@ -184,7 +184,7 @@ fn validate_filter_depth(node: &FilterNode, depth: usize, terms: &mut usize) -> 
                 "in" => {
                     let list = value
                         .as_array()
-                        .ok_or_else(|| DomainError::invalid("in operator requires an array"))?;
+                        .ok_or_else(|| in_value_error(field))?;
                     if list.is_empty() {
                         return Err(DomainError::invalid("in operator requires a value"));
                     }
@@ -898,14 +898,15 @@ impl QueryParser {
                             "{text}() takes exactly one field name; example: has(error)"
                         )));
                     }
-                    return make_term(&field, "exists", serde_json::json!(present))
-                        .map_err(|error| {
-                            query_error(format!("filter parse error at `{field}`: {error}"))
-                        });
-                }
-                parse_one_term(&text)
-                    .map_err(|error| query_error(format!("filter parse error at `{text}`: {error}")))
+                let term = make_term(&field, "exists", serde_json::json!(present)).map_err(
+                    |error| query_error(format!("filter parse error at `{field}`: {error}")),
+                )?;
+                return Ok(term);
             }
+            let node = parse_one_term(&text)
+                .map_err(|error| query_error(format!("filter parse error at `{text}`: {error}")))?;
+            Ok(node)
+        }
             Some(QueryToken::LeftParen) => {
                 let node = self.parse_or()?;
                 match self.next() {
