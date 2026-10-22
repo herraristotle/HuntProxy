@@ -256,7 +256,11 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
         })
         .await
         .unwrap();
-    assert!(state.oast.poll(other.id.get(), session.session_id).await.is_err());
+    assert!(state
+        .oast
+        .poll(other.id.get(), session.session_id)
+        .await
+        .is_err());
     assert!(state
         .oast
         .interactions(other.id.get(), session.session_id, None, None, None)
