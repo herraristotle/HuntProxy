@@ -1588,8 +1588,15 @@ mod tests {
 
         let filter = parse_text_query("has(label) NOT has(error)").unwrap();
         let (sql, _) = filter_to_sql(&filter).unwrap();
-        assert!(sql.contains("IS NOT NULL"));
-        assert!(sql.contains("NOT ("));
+        // The label side is an EXISTS subquery, so assert on that shape rather
+        // than borrowing the presence SQL from the sibling `error` term.
+        assert!(sql.starts_with("(EXISTS (SELECT 1 FROM exchange_labels"));
+        assert!(sql.contains("NOT (error_message IS NOT NULL)"));
+        assert!(!sql.contains("NOT (EXISTS"));
+
+        let missing = parse_text_query("missing(label)").unwrap();
+        let (sql, _) = filter_to_sql(&missing).unwrap();
+        assert!(sql.starts_with("NOT (EXISTS (SELECT 1 FROM exchange_labels"));
 
         // Unknown fields are still rejected inside has().
         let bad = parse_text_query("has(drop_table)").unwrap();
