@@ -878,10 +878,9 @@ impl QueryParser {
             Some(QueryToken::Text(text)) => {
                 // `has(field)` / `missing(field)`: presence test. The tokenizer
                 // splits on parentheses, so the field arrives as its own token.
-                if matches!(self.peek(), Some(QueryToken::LeftParen))
-                    && (text.eq_ignore_ascii_case("has") || text.eq_ignore_ascii_case("missing"))
-                {
-                    let present = text.eq_ignore_ascii_case("has");
+                let presence = presence_keyword(&text)
+                    .filter(|_| matches!(self.peek(), Some(QueryToken::LeftParen)));
+                if let Some(present) = presence {
                     self.position += 1; // consume `(`
                     let field = match self.next() {
                         Some(QueryToken::Text(field)) => field,
@@ -896,9 +895,11 @@ impl QueryParser {
                             "{text}() takes exactly one field name; example: has(error)"
                         )));
                     }
-                    return make_term(&field, "exists", serde_json::json!(present)).map_err(
-                        |error| query_error(format!("filter parse error at `{field}`: {error}")),
-                    );
+                    let term = make_term(&field, "exists", serde_json::json!(present))
+                        .map_err(|error| {
+                            query_error(format!("filter parse error at `{field}`: {error}"))
+                        })?;
+                    return Ok(term);
                 }
                 parse_one_term(&text).map_err(|error| {
                     query_error(format!("filter parse error at `{text}`: {error}"))
@@ -1024,6 +1025,17 @@ fn parse_one_term(part: &str) -> Result<FilterNode, String> {
             .map(|field| term(field, "contains", part).expect("bare fan-out fields are valid"))
             .collect(),
     })
+}
+
+/// `Some(true)` for `has`, `Some(false)` for `missing`, else `None`.
+fn presence_keyword(word: &str) -> Option<bool> {
+    if word.eq_ignore_ascii_case("has") {
+        Some(true)
+    } else if word.eq_ignore_ascii_case("missing") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 /// Operators written after a value colon, which the docs forbid. Returns the
