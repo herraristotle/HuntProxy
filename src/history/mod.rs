@@ -898,15 +898,14 @@ impl QueryParser {
                             "{text}() takes exactly one field name; example: has(error)"
                         )));
                     }
-                let term = make_term(&field, "exists", serde_json::json!(present)).map_err(
-                    |error| query_error(format!("filter parse error at `{field}`: {error}")),
-                )?;
-                return Ok(term);
+                    return make_term(&field, "exists", serde_json::json!(present)).map_err(
+                        |error| query_error(format!("filter parse error at `{field}`: {error}")),
+                    );
+                }
+                parse_one_term(&text).map_err(|error| {
+                    query_error(format!("filter parse error at `{text}`: {error}"))
+                })
             }
-            let node = parse_one_term(&text)
-                .map_err(|error| query_error(format!("filter parse error at `{text}`: {error}")))?;
-            Ok(node)
-        }
             Some(QueryToken::LeftParen) => {
                 let node = self.parse_or()?;
                 match self.next() {
