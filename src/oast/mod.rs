@@ -658,8 +658,10 @@ impl OastService {
         watch: bool,
         provider_id: Option<i64>,
     ) -> DomainResult<OastSessionView> {
-        self.require_enabled().await?;
         let resolved = self.resolve_provider(provider_id).await?;
+        if provider_id.is_none() {
+            self.require_enabled().await?;
+        }
         let opts = RegisterOptions {
             server: resolved.server.clone(),
             token: resolved.token.clone().unwrap_or_default(),
