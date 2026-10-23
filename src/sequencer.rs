@@ -566,14 +566,14 @@ mod tests {
     fn longest_run_is_applicable_at_realistic_sample_sizes() {
         // 20 tokens x 32 hex chars = 2560 bits. The old code required 20000
         // bits for the poker test and reported a skip as a pass.
-        let bits = vec![0u8, 1, 0, 1, 1, 0, 0, 1].repeat(320);
+        let bits: Vec<u8> = [0u8, 1, 0, 1, 1, 0, 0, 1].repeat(320);
         let result = longest_run_test(&bits);
         assert!(result.applicable);
     }
 
     #[test]
     fn poker_test_skips_below_threshold_instead_of_passing() {
-        let bits = vec![0u8, 1, 0, 1].repeat(100); // 400 bits
+        let bits: Vec<u8> = [0u8, 1, 0, 1].repeat(100); // 400 bits
         let result = poker_test(&bits);
         assert!(!result.applicable, "too little data must not report a pass");
         assert!(!result.passed);

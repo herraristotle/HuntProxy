@@ -147,7 +147,6 @@ fn protocol_error(message: impl Into<String>) -> DomainError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hybrid_array::Array as GenericArray;
     use rsa::pkcs8::DecodePublicKey;
 
     #[test]

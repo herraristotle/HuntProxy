@@ -389,10 +389,10 @@ mod tests {
 
     async fn wait_for_job(service: &FlowService, job: Uuid) -> FlowJobView {
         for _ in 0..400 {
-            if let Some(view) = service.get_job(job).await {
-                if view.state != FlowJobState::Running {
-                    return view;
-                }
+            if let Some(view) = service.get_job(job).await
+                && view.state != FlowJobState::Running
+            {
+                return view;
             }
             tokio::time::sleep(StdDuration::from_millis(25)).await;
         }
