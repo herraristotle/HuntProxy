@@ -768,7 +768,7 @@ fn reserve_checkpoint_bytes(
     compressed: Vec<u8>,
 ) -> Option<(Arc<Vec<u8>>, Arc<CheckpointReservation>)> {
     let bytes = compressed.len();
-    let admitted = total.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    let admitted = total.try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
         current
             .checked_add(bytes)
             .filter(|next| *next <= MAX_TOTAL_ANALYSIS_CHECKPOINT_BYTES)
