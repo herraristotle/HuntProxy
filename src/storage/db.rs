@@ -4,11 +4,11 @@ use crate::config::Config;
 use crate::domain::{DomainError, DomainResult, ErrorCode};
 use crate::storage::migrations;
 use deadpool_sqlite::{Config as PoolConfig, Pool, Runtime};
-use rusqlite::functions::FunctionFlags;
 use rusqlite::Connection;
+use rusqlite::functions::FunctionFlags;
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 #[derive(Clone)]
 pub struct Db {

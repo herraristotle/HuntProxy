@@ -1,9 +1,9 @@
 //! OAST session, label, and interaction persistence (project-scoped).
 
 use crate::domain::{DomainError, DomainResult, ErrorCode};
-use crate::storage::projects::{now_rfc3339, parse_time};
 use crate::storage::Db;
-use rusqlite::{params, OptionalExtension, Row};
+use crate::storage::projects::{now_rfc3339, parse_time};
+use rusqlite::{OptionalExtension, Row, params};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -816,18 +816,21 @@ mod tests {
             raw_response: String::new(),
             timestamp: ts.into(),
         };
-        assert!(db
-            .insert_oast_interaction(interaction("cidlabelaaaa", "2026-10-11T00:00:00Z"))
-            .await
-            .unwrap());
-        assert!(!db
-            .insert_oast_interaction(interaction("cidlabelaaaa", "2026-10-11T00:00:00Z"))
-            .await
-            .unwrap());
-        assert!(db
-            .insert_oast_interaction(interaction("cidlabelbbbb", "2026-10-11T00:00:01Z"))
-            .await
-            .unwrap());
+        assert!(
+            db.insert_oast_interaction(interaction("cidlabelaaaa", "2026-10-11T00:00:00Z"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !db.insert_oast_interaction(interaction("cidlabelaaaa", "2026-10-11T00:00:00Z"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.insert_oast_interaction(interaction("cidlabelbbbb", "2026-10-11T00:00:01Z"))
+                .await
+                .unwrap()
+        );
 
         let (all, total) = db
             .list_oast_interactions(project, session, None, 10, 0)
@@ -868,10 +871,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(label.case_index, Some(7));
-        assert!(db
-            .get_oast_label(session, "nomatch")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            db.get_oast_label(session, "nomatch")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

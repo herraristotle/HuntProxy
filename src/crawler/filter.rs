@@ -6,7 +6,7 @@ use regex::Regex;
 use url::Url;
 
 use crate::domain::{DomainError, DomainResult, ErrorCode};
-use crate::history::{parse_text_query, validate_filter, FilterNode};
+use crate::history::{FilterNode, parse_text_query, validate_filter};
 
 /// Fields evaluable against a candidate URL + method (no response yet).
 const URL_FIELDS: &[&str] = &["host", "authority", "path", "query", "method"];

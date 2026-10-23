@@ -6,7 +6,7 @@
 //! client would normalize while keeping arbitrary frame injection out of the
 //! plugin runtime.
 
-use super::raw::{connect_target, RawIo};
+use super::raw::{RawIo, connect_target};
 use super::{ReplySendContext, ReplyService};
 use crate::domain::*;
 use crate::policy::TargetRef;
@@ -913,29 +913,34 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(read.received.get(&1).unwrap().body, b"ok");
-        assert!(read
-            .transport_error
-            .as_deref()
-            .unwrap()
-            .contains("SETTINGS acknowledgement"));
+        assert!(
+            read.transport_error
+                .as_deref()
+                .unwrap()
+                .contains("SETTINGS acknowledgement")
+        );
         let mut initial_settings = Vec::new();
         append_frame(&mut initial_settings, 4, 0, 0, &[]).unwrap();
-        assert!(read_http2_responses(
-            response_fixture(initial_settings, FixtureEnding::Eof, true),
-            &HashSet::from([1]),
-            4096,
-            100
-        )
-        .await
-        .is_err());
-        assert!(read_http2_responses(
-            response_fixture(Vec::new(), FixtureEnding::Error, false),
-            &HashSet::from([1]),
-            4096,
-            100
-        )
-        .await
-        .is_err());
+        assert!(
+            read_http2_responses(
+                response_fixture(initial_settings, FixtureEnding::Eof, true),
+                &HashSet::from([1]),
+                4096,
+                100
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            read_http2_responses(
+                response_fixture(Vec::new(), FixtureEnding::Error, false),
+                &HashSet::from([1]),
+                4096,
+                100
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[tokio::test]

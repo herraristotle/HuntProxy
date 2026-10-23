@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
-use tokio::sync::broadcast;
 use tokio::sync::Mutex;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -16,7 +16,7 @@ use crate::domain::{
 use crate::reply::ReplyService;
 use crate::storage::Db;
 
-use super::interp::{trigger_kind_for, FlowRunOptions, FlowRunOutcome, FlowTrigger};
+use super::interp::{FlowRunOptions, FlowRunOutcome, FlowTrigger, trigger_kind_for};
 use super::nodes::BuiltInHandler;
 use super::validate::validate_flow;
 
@@ -112,7 +112,7 @@ impl FlowService {
                     "{} flows run with a `{expected}` trigger, got `{}`",
                     flow.kind.as_str(),
                     other.kind()
-                )))
+                )));
             }
         };
         self.spawn_job(project_id, flow.id, flow.definition, trigger, flow.name)

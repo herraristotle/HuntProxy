@@ -4,14 +4,14 @@
 //! wreq fails to build or licensing of the BoringSSL graph is rejected.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use futures::StreamExt;
 use primp::{Client, Impersonate};
-use transport_spike::{start_http_origin, start_https_origin, ValidatedDial};
+use transport_spike::{ValidatedDial, start_http_origin, start_https_origin};
 
 #[derive(Default)]
 struct Results {
@@ -74,7 +74,10 @@ async fn prove_http11(r: &mut Results) -> Result<()> {
     r.record(
         "http1.1_get",
         status.is_success() && body == "ok" && host_ok,
-        format!("status={status} version={ver:?} host={:?}", observed.as_ref().and_then(|o| o.host.clone())),
+        format!(
+            "status={status} version={ver:?} host={:?}",
+            observed.as_ref().and_then(|o| o.host.clone())
+        ),
     );
     origin.task.abort();
     Ok(())
@@ -176,7 +179,10 @@ async fn prove_cancellation(r: &mut Results) -> Result<()> {
     r.record(
         "cancellation_timeout",
         res.is_err() && elapsed < Duration::from_secs(2),
-        format!("err={:?} elapsed={elapsed:?}", res.err().map(|e| e.to_string())),
+        format!(
+            "err={:?} elapsed={elapsed:?}",
+            res.err().map(|e| e.to_string())
+        ),
     );
     origin.task.abort();
     Ok(())
@@ -205,7 +211,11 @@ async fn prove_custom_ca(r: &mut Results) -> Result<()> {
 
     r.record(
         "custom_ca_self_signed",
-        bad.is_err() && good.as_ref().map(|r| r.status().is_success()).unwrap_or(false),
+        bad.is_err()
+            && good
+                .as_ref()
+                .map(|r| r.status().is_success())
+                .unwrap_or(false),
         format!(
             "without_ca_err={} with_ca={:?}",
             bad.is_err(),
@@ -287,11 +297,7 @@ async fn prove_impersonate(r: &mut Results) -> Result<()> {
 
     match built {
         Ok(client) => {
-            r.record(
-                "impersonate_api",
-                true,
-                "Impersonate::ChromeV147 accepted",
-            );
+            r.record("impersonate_api", true, "Impersonate::ChromeV147 accepted");
             let url = format!("https://{hostname}:{}/health", origin.addr.port());
             match client
                 .get(&url)

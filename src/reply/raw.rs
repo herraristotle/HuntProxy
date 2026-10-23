@@ -609,7 +609,7 @@ async fn socks5_connect(
             return Err(DomainError::new(
                 ErrorCode::ProtocolError,
                 "invalid SOCKS5 address type",
-            ))
+            ));
         }
     };
     let mut ignored = vec![0u8; remaining + 2];
@@ -1448,17 +1448,19 @@ mod tests {
             ReadEnding::Pending,
         ] {
             let mut stream: Pin<Box<dyn RawIo>> = Box::pin(ResponseFixture::new(b"", ending));
-            assert!(read_raw_response(
-                &mut stream,
-                4096,
-                &RawHttp1Options {
-                    read_timeout_ms: 20,
-                    ..Default::default()
-                },
-                false
-            )
-            .await
-            .is_err());
+            assert!(
+                read_raw_response(
+                    &mut stream,
+                    4096,
+                    &RawHttp1Options {
+                        read_timeout_ms: 20,
+                        ..Default::default()
+                    },
+                    false
+                )
+                .await
+                .is_err()
+            );
         }
         assert_eq!(parse_response(b"").status_code, None);
         assert_eq!(parse_response(b"HTTP/1.1 20").status_code, None);
@@ -1728,33 +1730,41 @@ mod tests {
     fn advanced_options_are_explicit_and_bounded() {
         let request_len = 10;
         assert!(RawHttp1Options::default().validate(request_len).is_ok());
-        assert!(RawHttp1Options {
-            pause_at_byte: Some(5),
-            pause_ms: Some(100),
-            ..Default::default()
-        }
-        .validate(request_len)
-        .is_ok());
-        assert!(RawHttp1Options {
-            pause_at_byte: Some(10),
-            pause_ms: Some(100),
-            ..Default::default()
-        }
-        .validate(request_len)
-        .is_err());
-        assert!(RawHttp1Options {
-            pause_at_byte: Some(5),
-            pause_ms: None,
-            ..Default::default()
-        }
-        .validate(request_len)
-        .is_err());
-        assert!(RawHttp1Options {
-            await_response_before_continue: true,
-            ..Default::default()
-        }
-        .validate(request_len)
-        .is_err());
+        assert!(
+            RawHttp1Options {
+                pause_at_byte: Some(5),
+                pause_ms: Some(100),
+                ..Default::default()
+            }
+            .validate(request_len)
+            .is_ok()
+        );
+        assert!(
+            RawHttp1Options {
+                pause_at_byte: Some(10),
+                pause_ms: Some(100),
+                ..Default::default()
+            }
+            .validate(request_len)
+            .is_err()
+        );
+        assert!(
+            RawHttp1Options {
+                pause_at_byte: Some(5),
+                pause_ms: None,
+                ..Default::default()
+            }
+            .validate(request_len)
+            .is_err()
+        );
+        assert!(
+            RawHttp1Options {
+                await_response_before_continue: true,
+                ..Default::default()
+            }
+            .validate(request_len)
+            .is_err()
+        );
     }
 
     #[test]
@@ -1807,11 +1817,13 @@ mod tests {
             added,
             b"GET / HTTP/1.1\r\nHost: example.com\r\nCookie: sid=managed\r\n\r\n"
         );
-        assert!(inject_cookie_header(
-            b"GET / HTTP/1.1\r\nHost: example.com\r\n folded\r\n\r\n",
-            "sid=managed"
-        )
-        .is_err());
+        assert!(
+            inject_cookie_header(
+                b"GET / HTTP/1.1\r\nHost: example.com\r\n folded\r\n\r\n",
+                "sid=managed"
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1874,9 +1886,11 @@ mod tests {
             .unwrap();
         stream.write_all(b"test").await.unwrap();
         let (connect, payload) = server.await.unwrap();
-        assert!(String::from_utf8(connect)
-            .unwrap()
-            .starts_with("CONNECT target.test:8080 HTTP/1.1\r\n"));
+        assert!(
+            String::from_utf8(connect)
+                .unwrap()
+                .starts_with("CONNECT target.test:8080 HTTP/1.1\r\n")
+        );
         assert_eq!(&payload, b"test");
     }
 

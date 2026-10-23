@@ -9,17 +9,17 @@
 //! - Chrome-like profile/emulation via wreq-util
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use futures::StreamExt;
-use transport_spike::{
-    resolve_call_counter, start_http_origin, start_https_origin, FixedIpResolver, ValidatedDial,
-};
 use transport_spike::validated_dial::reset_resolve_call_counter;
+use transport_spike::{
+    FixedIpResolver, ValidatedDial, resolve_call_counter, start_http_origin, start_https_origin,
+};
 use wreq::dns::Resolve;
 use wreq::{Body, Client, Version};
 use wreq_util::Emulation;
@@ -117,7 +117,10 @@ async fn prove_http2_tls(r: &mut Results) -> Result<()> {
     let dial = ValidatedDial {
         hostname: hostname.into(),
         port: origin.addr.port(),
-        approved_socket_addrs: vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), origin.addr.port())],
+        approved_socket_addrs: vec![SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            origin.addr.port(),
+        )],
         policy_epoch: 1,
     };
     let resolver = FixedIpResolver::for_dial(&dial);
@@ -238,7 +241,10 @@ async fn prove_cancellation(r: &mut Results) -> Result<()> {
     r.record(
         "cancellation_timeout",
         ok,
-        format!("err={:?} elapsed={elapsed:?}", res.err().map(|e| e.to_string())),
+        format!(
+            "err={:?} elapsed={elapsed:?}",
+            res.err().map(|e| e.to_string())
+        ),
     );
 
     // Explicit drop/cancel of a streaming body future
@@ -290,7 +296,11 @@ async fn prove_custom_ca(r: &mut Results) -> Result<()> {
         .dns_resolver(FixedIpResolver::for_dial(&dial))
         .build()?;
     let good = client_good.get(&url).send().await;
-    let ok = fails_without_ca && good.as_ref().map(|r| r.status().is_success()).unwrap_or(false);
+    let ok = fails_without_ca
+        && good
+            .as_ref()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
 
     r.record(
         "custom_ca_self_signed",
@@ -341,13 +351,14 @@ async fn prove_validated_dial_no_system_dns(r: &mut Results) -> Result<()> {
         hits: hits.clone(),
     };
 
-    let client = base_builder()
-        .http1_only()
-        .dns_resolver(resolver)
-        .build()?;
+    let client = base_builder().http1_only().dns_resolver(resolver).build()?;
 
     let url = format!("http://{hostname}:{}/health", origin.addr.port());
-    let resp = client.get(&url).send().await.context("validated dial get")?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .context("validated dial get")?;
     let status = resp.status();
     let remote = resp.remote_addr();
     let observed = origin.state.take_last().await;
@@ -356,9 +367,7 @@ async fn prove_validated_dial_no_system_dns(r: &mut Results) -> Result<()> {
         .as_ref()
         .map(|h| h.starts_with(hostname))
         .unwrap_or(false);
-    let remote_ok = remote
-        .map(|r| r.ip() == approved.ip())
-        .unwrap_or(true); // remote_addr may be None on some paths; peer on origin is better
+    let remote_ok = remote.map(|r| r.ip() == approved.ip()).unwrap_or(true); // remote_addr may be None on some paths; peer on origin is better
     let peer_ok = observed
         .as_ref()
         .and_then(|o| o.peer)
@@ -397,7 +406,10 @@ async fn prove_validated_dial_no_system_dns(r: &mut Results) -> Result<()> {
     let resp2 = client2.get(&url).send().await;
     r.record(
         "validated_dial_resolve_override",
-        resp2.as_ref().map(|x| x.status().is_success()).unwrap_or(false),
+        resp2
+            .as_ref()
+            .map(|x| x.status().is_success())
+            .unwrap_or(false),
         format!("status={:?}", resp2.as_ref().map(|x| x.status())),
     );
 
@@ -466,7 +478,10 @@ async fn prove_emulation(r: &mut Results) -> Result<()> {
     r.record(
         "emulation_chrome_request",
         ok,
-        format!("status={:?} version={ver:?}", resp.as_ref().map(|r| r.status())),
+        format!(
+            "status={:?} version={ver:?}",
+            resp.as_ref().map(|r| r.status())
+        ),
     );
 
     origin.task.abort();

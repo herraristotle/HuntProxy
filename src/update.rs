@@ -258,7 +258,9 @@ async fn run_with_context(
             .map_err(|error| update_error(format!("inspect database compatibility: {error}")))?;
             let schema = crate::storage::schema_version(&database)?;
             if schema > 14 {
-                return Err(update_error("this data directory requires HuntProxy 0.2 or newer; downgrading would make saved projects unavailable"));
+                return Err(update_error(
+                    "this data directory requires HuntProxy 0.2 or newer; downgrading would make saved projects unavailable",
+                ));
             }
         }
     }
@@ -442,7 +444,9 @@ async fn activate_release(
             result => {
                 if was_running {
                     if let Err(restart) = app::start_daemon_binary(config, &executable).await {
-                        return Err(update_error(format!("could not preserve update state and could not restart the previous daemon: {restart}")));
+                        return Err(update_error(format!(
+                            "could not preserve update state and could not restart the previous daemon: {restart}"
+                        )));
                     }
                 }
                 return Err(match result {
@@ -818,7 +822,7 @@ impl DataSnapshot {
                         Ok(()) => {}
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                         Err(error) => {
-                            return Err(update_error(format!("restore database sidecar: {error}")))
+                            return Err(update_error(format!("restore database sidecar: {error}")));
                         }
                     }
                 }
@@ -1133,7 +1137,7 @@ fn extract_staged_binary(archive_path: &Path, parent: &Path) -> DomainResult<Tem
                 return Err(update_error(format!(
                     "unexpected release archive member: {}",
                     String::from_utf8_lossy(&name)
-                )))
+                )));
             }
         }
     }
@@ -1231,7 +1235,7 @@ fn create_temp_file(parent: &Path, label: &str, mode: u32) -> DomainResult<(Path
                 return Err(update_error(format!(
                     "create update staging file in {}: {error}",
                     parent.display()
-                )))
+                )));
             }
         }
     }
@@ -1361,8 +1365,8 @@ fn update_error(message: impl Into<String>) -> DomainError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::os::unix::fs::PermissionsExt;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1501,11 +1505,13 @@ mod tests {
             [0xaa; 32]
         );
         assert!(parse_checksum(format!("{hash}  other.tar.gz\n").as_bytes(), asset).is_err());
-        assert!(parse_checksum(
-            format!("{hash}  {asset}\n{hash}  {asset}\n").as_bytes(),
-            asset
-        )
-        .is_err());
+        assert!(
+            parse_checksum(
+                format!("{hash}  {asset}\n{hash}  {asset}\n").as_bytes(),
+                asset
+            )
+            .is_err()
+        );
         assert!(parse_checksum(format!("xyz  {asset}\n").as_bytes(), asset).is_err());
     }
 
@@ -1924,9 +1930,11 @@ esac
         )
         .await
         .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("requires HuntProxy 0.2 or newer"));
+        assert!(
+            error
+                .to_string()
+                .contains("requires HuntProxy 0.2 or newer")
+        );
         assert_eq!(fs::read(executable).unwrap(), script("0.2.0"));
         assert!(staging_files(directory.path()).is_empty());
     }
@@ -1962,9 +1970,11 @@ esac
             error.to_string().contains("recovery requires attention"),
             "{error}"
         );
-        assert!(!error
-            .to_string()
-            .contains("previous installation was restored"));
+        assert!(
+            !error
+                .to_string()
+                .contains("previous installation was restored")
+        );
         assert_eq!(
             inspect_binary_version(&executable).await.unwrap(),
             StableVersion::parse("0.3.0").unwrap()

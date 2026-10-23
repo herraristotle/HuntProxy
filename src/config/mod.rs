@@ -729,11 +729,7 @@ fn which_path(name: &str) -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths).find_map(|dir| {
             let p = dir.join(name);
-            if p.is_file() {
-                Some(p)
-            } else {
-                None
-            }
+            if p.is_file() { Some(p) } else { None }
         })
     })
 }
@@ -899,30 +895,34 @@ mod tests {
         assert!(validate_upstream_proxy_url("https://proxy.test:443").is_err());
         assert!(validate_upstream_proxy_url("http://proxy.test:8080/path").is_err());
         assert!(validate_host_pattern("foo.*.example.com").is_err());
-        assert!(UpstreamProxyConfig {
-            project_rules: vec![ProjectUpstreamProxyRule {
-                project_id: 0,
-                proxy: "http://proxy.test:8080".into(),
-            }],
-            ..Default::default()
-        }
-        .validate()
-        .is_err());
-        assert!(UpstreamProxyConfig {
-            project_rules: vec![
-                ProjectUpstreamProxyRule {
-                    project_id: 41,
-                    proxy: "http://one.test:8080".into(),
-                },
-                ProjectUpstreamProxyRule {
-                    project_id: 41,
-                    proxy: "http://two.test:8080".into(),
-                },
-            ],
-            ..Default::default()
-        }
-        .validate()
-        .is_err());
+        assert!(
+            UpstreamProxyConfig {
+                project_rules: vec![ProjectUpstreamProxyRule {
+                    project_id: 0,
+                    proxy: "http://proxy.test:8080".into(),
+                }],
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            UpstreamProxyConfig {
+                project_rules: vec![
+                    ProjectUpstreamProxyRule {
+                        project_id: 41,
+                        proxy: "http://one.test:8080".into(),
+                    },
+                    ProjectUpstreamProxyRule {
+                        project_id: 41,
+                        proxy: "http://two.test:8080".into(),
+                    },
+                ],
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

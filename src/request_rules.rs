@@ -1,7 +1,7 @@
 //! Project-scoped semantic request match/replace rules.
 
 use crate::domain::*;
-use crate::storage::{now_rfc3339, Db};
+use crate::storage::{Db, now_rfc3339};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -659,9 +659,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(url, "https://api.example.test/v2/items");
-        assert!(headers
-            .iter()
-            .any(|(name, value)| name == "X-Client" && value == b"agent"));
+        assert!(
+            headers
+                .iter()
+                .any(|(name, value)| name == "X-Client" && value == b"agent")
+        );
         assert_eq!(bytes, b"new new");
         assert_eq!(first.len() + second.len(), 3);
     }
@@ -679,10 +681,12 @@ mod tests {
         rule.host_pattern = Some("api.example.test".into());
         db.create_request_rule(project_id, rule).await.unwrap();
         let mut url = "https://other.example.test/old".to_string();
-        assert!(apply_url_rules(&db, project_id, &mut url)
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            apply_url_rules(&db, project_id, &mut url)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(url, "https://other.example.test/old");
     }
 

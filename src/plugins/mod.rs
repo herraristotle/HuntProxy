@@ -11,18 +11,18 @@ use crate::reply::{ReplySendContext, ReplyService};
 use arc_swap::ArcSwap;
 use base64::Engine;
 use dashmap::DashMap;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use rquickjs::{
-    function::This, CatchResultExt, Context, Function, Object, Runtime, Value as JsValue,
+    CatchResultExt, Context, Function, Object, Runtime, Value as JsValue, function::This,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
@@ -2608,7 +2608,14 @@ impl PluginService {
                         .get("explanation")
                         .and_then(Value::as_str)
                         .unwrap_or("No explanation supplied.");
-                    format!("Severity: {severity}\nConfidence: {confidence}\n\n{explanation}\n\nEvidence exchanges: {}", evidence.iter().map(|id| id.get().to_string()).collect::<Vec<_>>().join(", "))
+                    format!(
+                        "Severity: {severity}\nConfidence: {confidence}\n\n{explanation}\n\nEvidence exchanges: {}",
+                        evidence
+                            .iter()
+                            .map(|id| id.get().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
                 };
                 pending_findings.push((exchange_id, title.to_string(), description));
             }
@@ -3602,7 +3609,10 @@ impl PluginService {
                 if group.members.len() > project_limit {
                     return Err(DomainError::new(
                         ErrorCode::ConcurrencyLimited,
-                        format!("raw_http1_group requires {} concurrent connections; project limit is {project_limit}", group.members.len()),
+                        format!(
+                            "raw_http1_group requires {} concurrent connections; project limit is {project_limit}",
+                            group.members.len()
+                        ),
                     ));
                 }
                 let aggregate_response_cap = project
@@ -3837,7 +3847,10 @@ impl PluginService {
                 {
                     return Err(DomainError::new(
                         ErrorCode::ConcurrencyLimited,
-                        format!("last_byte_sync requires {} concurrent connections; project limit is {project_limit}", group.requests.len()),
+                        format!(
+                            "last_byte_sync requires {} concurrent connections; project limit is {project_limit}",
+                            group.requests.len()
+                        ),
                     ));
                 }
                 let responses = match group.technique {
@@ -4899,10 +4912,12 @@ fn summarize_plugin_result(result: &Value) -> Value {
                 .collect::<serde_json::Map<_, _>>();
             summary.insert(
                 "evidence_exchange_count".into(),
-                json!(object
-                    .get("evidence_exchange_ids")
-                    .and_then(Value::as_array)
-                    .map_or(0, Vec::len)),
+                json!(
+                    object
+                        .get("evidence_exchange_ids")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len)
+                ),
             );
             Value::Object(summary)
         })
@@ -6438,7 +6453,12 @@ fn compact_analysis_observations(mut observations: Value, maximum: usize) -> Dom
         .map_err(|error| DomainError::invalid(error.to_string()))?
         .len();
     if size > maximum {
-        return Err(DomainError::new(ErrorCode::BodyTooLarge, format!("plugin observations remain larger than {maximum} bytes after omitting captured bodies")));
+        return Err(DomainError::new(
+            ErrorCode::BodyTooLarge,
+            format!(
+                "plugin observations remain larger than {maximum} bytes after omitting captured bodies"
+            ),
+        ));
     }
     Ok(observations)
 }
@@ -7586,21 +7606,27 @@ mod tests {
 
     #[test]
     fn observation_policy_is_bounded_before_execution() {
-        assert!(validate_observation_policy(&PluginObservationPolicy {
-            body_bytes: 0,
-            body_contains: vec!["marker".into()]
-        })
-        .is_ok());
-        assert!(validate_observation_policy(&PluginObservationPolicy {
-            body_bytes: MAX_RESPONSE_BODY_FOR_PLUGIN + 1,
-            body_contains: vec![]
-        })
-        .is_err());
-        assert!(validate_observation_policy(&PluginObservationPolicy {
-            body_bytes: 0,
-            body_contains: vec!["x".repeat(201)]
-        })
-        .is_err());
+        assert!(
+            validate_observation_policy(&PluginObservationPolicy {
+                body_bytes: 0,
+                body_contains: vec!["marker".into()]
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_observation_policy(&PluginObservationPolicy {
+                body_bytes: MAX_RESPONSE_BODY_FOR_PLUGIN + 1,
+                body_contains: vec![]
+            })
+            .is_err()
+        );
+        assert!(
+            validate_observation_policy(&PluginObservationPolicy {
+                body_bytes: 0,
+                body_contains: vec!["x".repeat(201)]
+            })
+            .is_err()
+        );
     }
 
     #[test]
@@ -7712,7 +7738,10 @@ mod tests {
         };
         let error = validate_action_base_exchange(&manifest, &action, None).unwrap_err();
         assert_eq!(error.code(), ErrorCode::InvalidArgument);
-        assert_eq!(error.to_string(), "Saved Request Test requires base_exchange_id. Capture a saved request, then preview the scan action again.");
+        assert_eq!(
+            error.to_string(),
+            "Saved Request Test requires base_exchange_id. Capture a saved request, then preview the scan action again."
+        );
         assert!(validate_action_base_exchange(&manifest, &action, Some(ExchangeId(42))).is_ok());
     }
 
@@ -7768,10 +7797,15 @@ mod tests {
                 .unwrap_err(),
         ] {
             assert_eq!(error.code(), ErrorCode::InvalidArgument);
-            assert_eq!(error.to_string(), "Saved Request Test requires base_exchange_id. Capture a saved request, then preview the scan action again.");
-            assert!(!error
-                .to_string()
-                .contains("javascript planner must not run"));
+            assert_eq!(
+                error.to_string(),
+                "Saved Request Test requires base_exchange_id. Capture a saved request, then preview the scan action again."
+            );
+            assert!(
+                !error
+                    .to_string()
+                    .contains("javascript planner must not run")
+            );
             assert!(!error.to_string().contains("eval_script"));
         }
     }
@@ -8038,15 +8072,19 @@ mod tests {
         assert_eq!(cancelled.phase, PluginJobPhase::Finished);
         assert_eq!(cancelled.operation_count, 0);
         assert_eq!(cancelled.completed_operations, 0);
-        assert!(cancelled
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("cancelled")));
-        assert!(!service
-            .results(job.id, PluginResultView::Full, 0, 25)
-            .unwrap()["result_available"]
-            .as_bool()
-            .unwrap());
+        assert!(
+            cancelled
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("cancelled"))
+        );
+        assert!(
+            !service
+                .results(job.id, PluginResultView::Full, 0, 25)
+                .unwrap()["result_available"]
+                .as_bool()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -8337,9 +8375,11 @@ mod tests {
         assert_eq!(partial["summary"]["execution"]["state"], "partial");
         assert_eq!(partial["summary"]["execution"]["observed_operations"], 1);
         assert_eq!(partial["summary"]["execution"]["unobserved_operations"], 1);
-        assert!(!partial["job"]["analysis_resume_available"]
-            .as_bool()
-            .unwrap());
+        assert!(
+            !partial["job"]["analysis_resume_available"]
+                .as_bool()
+                .unwrap()
+        );
 
         let mut timeout_plugin = service
             .plugin("retry-test")
@@ -8476,23 +8516,27 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(status.id(), "ip-rotation-status");
-        assert!(serde_json::from_value::<PluginOperation>(json!({
-            "type": "aws_api_gateway",
-            "action": "enable",
-            "id": "ip-rotation-enable",
-            "target_url": "https://api.example.test",
-            "regions": ["us-east-1"],
-            "stage_name": "huntproxy",
-            "credentials": "must-not-be-accepted"
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<PluginOperation>(json!({
+                "type": "aws_api_gateway",
+                "action": "enable",
+                "id": "ip-rotation-enable",
+                "target_url": "https://api.example.test",
+                "regions": ["us-east-1"],
+                "stage_name": "huntproxy",
+                "credentials": "must-not-be-accepted"
+            }))
+            .is_err()
+        );
         assert!(validate_gateway_target("https://api.example.test").is_ok());
         assert!(validate_gateway_target("https://api.example.test/base").is_err());
         assert!(validate_gateway_target("https://user:pass@example.test").is_err());
-        assert!(validate_gateway_endpoint(
-            "https://abcde12345.execute-api.us-east-1.amazonaws.com/huntproxy"
-        )
-        .is_ok());
+        assert!(
+            validate_gateway_endpoint(
+                "https://abcde12345.execute-api.us-east-1.amazonaws.com/huntproxy"
+            )
+            .is_ok()
+        );
         assert!(validate_gateway_endpoint("https://example.test/huntproxy").is_err());
         assert!(validate_regions(&["us-east-1".into(), "eu-west-1".into()]).is_ok());
         assert!(validate_regions(&["us-east-1".into(), "us-east-1".into()]).is_err());
@@ -8581,11 +8625,12 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("was disabled"));
-        assert!(db
-            .next_ip_rotation_route(project.id, "https://api.example.test/path")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            db.next_ip_rotation_route(project.id, "https://api.example.test/path")
+                .await
+                .unwrap()
+                .is_none()
+        );
         let profiles = db.list_ip_rotation_profiles(project.id).await.unwrap();
         assert_eq!(profiles.len(), 1);
         assert!(!profiles[0].enabled);
@@ -8680,14 +8725,16 @@ mod tests {
 
     #[test]
     fn browser_csrf_operation_rejects_unknown_fields() {
-        assert!(serde_json::from_value::<PluginOperation>(json!({
-            "type": "browser_csrf",
-            "id": "unsafe",
-            "base_exchange_id": 42,
-            "mode": "top_level_get",
-            "script": "alert(1)"
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<PluginOperation>(json!({
+                "type": "browser_csrf",
+                "id": "unsafe",
+                "base_exchange_id": 42,
+                "mode": "top_level_get",
+                "script": "alert(1)"
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -8715,12 +8762,16 @@ mod tests {
     fn browser_csrf_cookie_delivery_requires_matching_identity_value() {
         let expected =
             crate::cookies::parse_cookie_header("session=secret; preference=dark").unwrap();
-        assert!(matched_cookie_names(&expected, "unrelated=1")
-            .unwrap()
-            .is_empty());
-        assert!(matched_cookie_names(&expected, "session=wrong")
-            .unwrap()
-            .is_empty());
+        assert!(
+            matched_cookie_names(&expected, "unrelated=1")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            matched_cookie_names(&expected, "session=wrong")
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             matched_cookie_names(&expected, "session=secret; other=1")
                 .unwrap()
@@ -8830,15 +8881,21 @@ mod tests {
             .expect("local raw group server timed out")
             .unwrap();
         assert_eq!(received.len(), 2);
-        assert!(received
-            .iter()
-            .all(|(_, arrivals_when_request_arrived)| *arrivals_when_request_arrived == 2));
-        assert!(received
-            .iter()
-            .any(|(request, _)| request.starts_with(b"GET /first ")));
-        assert!(received
-            .iter()
-            .any(|(request, _)| request.starts_with(b"GET /second ")));
+        assert!(
+            received
+                .iter()
+                .all(|(_, arrivals_when_request_arrived)| *arrivals_when_request_arrived == 2)
+        );
+        assert!(
+            received
+                .iter()
+                .any(|(request, _)| request.starts_with(b"GET /first "))
+        );
+        assert!(
+            received
+                .iter()
+                .any(|(request, _)| request.starts_with(b"GET /second "))
+        );
         assert_eq!(result["dispatch"], "parallel_barrier");
         assert_eq!(result["members"][0]["id"], "first");
         assert_eq!(result["members"][1]["id"], "second");
@@ -8855,14 +8912,18 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert!(annotation.labels.iter().any(|label| label == "plugin"));
-            assert!(annotation
-                .labels
-                .iter()
-                .any(|label| label == "plugin:request-smuggler"));
-            assert!(annotation
-                .labels
-                .iter()
-                .any(|label| label == &format!("plugin-op:pair_{member}")));
+            assert!(
+                annotation
+                    .labels
+                    .iter()
+                    .any(|label| label == "plugin:request-smuggler")
+            );
+            assert!(
+                annotation
+                    .labels
+                    .iter()
+                    .any(|label| label == &format!("plugin-op:pair_{member}"))
+            );
         }
     }
 
@@ -8987,11 +9048,13 @@ mod tests {
         let PluginOperation::RaceGroup(group) = race else {
             panic!("expected race group")
         };
-        assert!(group.requests[0]
-            .url
-            .as_deref()
-            .unwrap()
-            .ends_with("csrf=secret%2B%2Ftoken"));
+        assert!(
+            group.requests[0]
+                .url
+                .as_deref()
+                .unwrap()
+                .ends_with("csrf=secret%2B%2Ftoken")
+        );
         assert_eq!(group.requests[0].headers[0].value, b"secret%2B%2Ftoken");
         assert_eq!(
             group.requests[0].body_text.as_deref(),
@@ -9066,10 +9129,12 @@ mod tests {
                 "operations": [operation.clone()]
             }))
             .unwrap();
-            assert!(validate_race_data_flow(&plan)
-                .unwrap_err()
-                .to_string()
-                .contains(expected));
+            assert!(
+                validate_race_data_flow(&plan)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(expected)
+            );
         }
         let duplicate: PluginPlan = serde_json::from_value(json!({
             "execution": "sequential",
@@ -9077,10 +9142,12 @@ mod tests {
             "operations": [operation.clone(), operation]
         }))
         .unwrap();
-        assert!(validate_race_data_flow(&duplicate)
-            .unwrap_err()
-            .to_string()
-            .contains("duplicate race extract name"));
+        assert!(
+            validate_race_data_flow(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate race extract name")
+        );
 
         let mut missing = json!({
             "responses": [{"id":"one","_extract":{"response_headers":[]}}]
@@ -9129,10 +9196,12 @@ mod tests {
         .unwrap();
         let mut values = HashMap::new();
         values.insert("token".into(), "private".into());
-        assert!(substitute_race_operation(&mut regex_operation, &values)
-            .unwrap_err()
-            .to_string()
-            .contains("not supported in regex predicates"));
+        assert!(
+            substitute_race_operation(&mut regex_operation, &values)
+                .unwrap_err()
+                .to_string()
+                .contains("not supported in regex predicates")
+        );
     }
 
     #[test]
@@ -9161,12 +9230,14 @@ mod tests {
         );
         let scope = ScopePolicy::default();
         assert_eq!(host.as_deref(), Some("lab.web-security-academy.net"));
-        assert!(enforce_plugin_scope(
-            "https://lab.web-security-academy.net/change",
-            &scope,
-            host.as_deref(),
-        )
-        .is_ok());
+        assert!(
+            enforce_plugin_scope(
+                "https://lab.web-security-academy.net/change",
+                &scope,
+                host.as_deref(),
+            )
+            .is_ok()
+        );
         assert_eq!(
             enforce_plugin_scope(
                 "https://portswigger.net/web-security/all-labs",
@@ -9318,11 +9389,13 @@ mod tests {
             cookie_file: None,
         };
         assert_eq!(identity_selector_key(&selector).unwrap(), "profile:sco");
-        assert!(identity_selector_key(&PluginIdentitySelector {
-            profile: Some("a".into()),
-            cookie_file: Some("b".into())
-        })
-        .is_err());
+        assert!(
+            identity_selector_key(&PluginIdentitySelector {
+                profile: Some("a".into()),
+                cookie_file: Some("b".into())
+            })
+            .is_err()
+        );
         let profile = crate::cookies::validate_cookie_profile("https://example.test/admin", r#"[{"name":"sid","value":"secret","domain":"example.test","path":"/admin","secure":true}]"#.into()).unwrap();
         let mut resolved = HashMap::new();
         resolved.insert(
@@ -9347,12 +9420,14 @@ mod tests {
             .unwrap(),
             Some("sid=secret".into())
         );
-        assert!(resolve_operation_identity_cookie(
-            Some(&selector),
-            &resolved,
-            "https://example.test/public"
-        )
-        .is_err());
+        assert!(
+            resolve_operation_identity_cookie(
+                Some(&selector),
+                &resolved,
+                "https://example.test/public"
+            )
+            .is_err()
+        );
         let input =
             json!({"primary":{"profile":"sco"},"secondary":{"cookie_file":"/private/two.json"}});
         let keys = collect_input_identity_selector_keys(&input).unwrap();

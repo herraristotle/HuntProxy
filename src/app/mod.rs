@@ -7,7 +7,7 @@ use crate::domain::*;
 use crate::fuzzer::FuzzerService;
 use crate::reply::{PlaceholderKey, ReplyService};
 use crate::storage::Db;
-use crate::transport::{build_default_transport, SemanticTransport};
+use crate::transport::{SemanticTransport, build_default_transport};
 use serde::Serialize;
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
@@ -818,7 +818,7 @@ fn daemon_lock_is_stale(config: &Config) -> DomainResult<bool> {
             return Err(DomainError::new(
                 ErrorCode::StorageError,
                 format!("daemon lock: {error}"),
-            ))
+            ));
         }
     };
     match nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusiveNonblock) {

@@ -1,7 +1,7 @@
 //! Project CRUD.
 
 use crate::domain::*;
-use crate::storage::{write_transaction, Db};
+use crate::storage::{Db, write_transaction};
 use rusqlite::params;
 use serde::Serialize;
 use std::collections::BTreeMap;

@@ -1,8 +1,8 @@
 //! Versioned, bounded HuntProxy project bundles.
 
-use crate::config::{create_private_dir, write_private_file, Config};
+use crate::config::{Config, create_private_dir, write_private_file};
 use crate::domain::*;
-use crate::storage::{migrate, reconcile_project_usage_conn, schema_version, Db};
+use crate::storage::{Db, migrate, reconcile_project_usage_conn, schema_version};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -946,18 +946,22 @@ mod tests {
                 .unwrap(),
             vec![1, 2, 3]
         );
-        assert!(config
-            .browser_profiles_dir()
-            .join("projects")
-            .join(imported.project.id.get().to_string())
-            .join("state.json")
-            .is_file());
-        assert!(config
-            .browser_profiles_dir()
-            .join("projects")
-            .join(imported.project.id.get().to_string())
-            .join("profiles/account1/state.json")
-            .is_file());
+        assert!(
+            config
+                .browser_profiles_dir()
+                .join("projects")
+                .join(imported.project.id.get().to_string())
+                .join("state.json")
+                .is_file()
+        );
+        assert!(
+            config
+                .browser_profiles_dir()
+                .join("projects")
+                .join(imported.project.id.get().to_string())
+                .join("profiles/account1/state.json")
+                .is_file()
+        );
         let imported_session = db
             .get_browser_session(imported.project.id, BrowserSessionId(2))
             .await
@@ -1087,26 +1091,30 @@ mod tests {
         let imported = db.import_bundle(&config, bundle, None).await.unwrap();
         assert!(!imported.secrets_included);
         assert!(!imported.browser_state_imported);
-        assert!(db
-            .load_raw_headers(imported.project.id, ExchangeId(1), MessageSide::Request)
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(db
-            .load_raw_body(imported.project.id, ExchangeId(1), MessageSide::Request)
-            .await
-            .unwrap()
-            .is_none());
-        assert!(db
-            .list_named_cookie_profiles(imported.project.id)
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(db
-            .list_ip_rotation_profiles(imported.project.id)
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            db.load_raw_headers(imported.project.id, ExchangeId(1), MessageSide::Request)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            db.load_raw_body(imported.project.id, ExchangeId(1), MessageSide::Request)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db.list_named_cookie_profiles(imported.project.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            db.list_ip_rotation_profiles(imported.project.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -1328,10 +1336,12 @@ mod tests {
 
         let destination_config = test_config(&directory.path().join("destination"));
         let destination_db = Db::open(&destination_config).await.unwrap();
-        assert!(destination_db
-            .import_bundle(&destination_config, invalid, None)
-            .await
-            .is_err());
+        assert!(
+            destination_db
+                .import_bundle(&destination_config, invalid, None)
+                .await
+                .is_err()
+        );
         assert!(destination_db.list_projects().await.unwrap().is_empty());
         assert_no_import_staging(&destination_config);
     }

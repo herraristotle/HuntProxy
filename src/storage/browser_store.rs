@@ -1,8 +1,8 @@
 //! Browser session metadata (checkpoints are memory-only).
 
 use crate::domain::*;
-use crate::storage::projects::{now_rfc3339, parse_time};
 use crate::storage::Db;
+use crate::storage::projects::{now_rfc3339, parse_time};
 use rusqlite::params;
 
 impl Db {

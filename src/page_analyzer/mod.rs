@@ -1361,12 +1361,16 @@ mod tests {
         assert_eq!(result.total, 3);
         assert_eq!(result.targets.len(), 2);
         assert!(result.truncated);
-        assert!(result
-            .targets
-            .contains(&"https://example.test/resources/js/geolocate.js".to_string()));
-        assert!(result
-            .targets
-            .contains(&"https://example.test/app.js".to_string()));
+        assert!(
+            result
+                .targets
+                .contains(&"https://example.test/resources/js/geolocate.js".to_string())
+        );
+        assert!(
+            result
+                .targets
+                .contains(&"https://example.test/app.js".to_string())
+        );
         let serialized = serde_json::to_string(&result).unwrap();
         assert!(!serialized.contains("secret"));
         assert!(!serialized.contains("credential"));
@@ -1526,8 +1530,8 @@ mod tests {
     #[tokio::test]
     async fn script_tree_stops_at_the_bundle_limit() {
         use std::sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         };
 
         let root = (0..MAX_SCRIPT_BUNDLES + 4)
@@ -1647,18 +1651,24 @@ mod tests {
         .await;
 
         assert_eq!(result.js_bundle_failures, 2);
-        assert!(result
-            .analysis
-            .endpoints
-            .contains(&"/api/accepted".to_string()));
-        assert!(!result
-            .analysis
-            .endpoints
-            .contains(&"/api/false-positive".to_string()));
-        assert!(!result
-            .analysis
-            .endpoints
-            .contains(&"/api/also-false".to_string()));
+        assert!(
+            result
+                .analysis
+                .endpoints
+                .contains(&"/api/accepted".to_string())
+        );
+        assert!(
+            !result
+                .analysis
+                .endpoints
+                .contains(&"/api/false-positive".to_string())
+        );
+        assert!(
+            !result
+                .analysis
+                .endpoints
+                .contains(&"/api/also-false".to_string())
+        );
     }
 
     #[tokio::test]
@@ -1693,10 +1703,12 @@ mod tests {
                 "https://example.test/rewritten/nested/child.js",
             ]
         );
-        assert!(result
-            .analysis
-            .endpoints
-            .contains(&"/api/from-child".to_string()));
+        assert!(
+            result
+                .analysis
+                .endpoints
+                .contains(&"/api/from-child".to_string())
+        );
         assert_eq!(result.js_bundle_failures, 0);
     }
 }

@@ -7,8 +7,8 @@ use huntproxy::domain::{CreateProjectRequest, DomainError, DomainResult, ErrorCo
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::MakeWriter;
 
 const MAX_DAEMON_LOG_BYTES: u64 = 5 * 1024 * 1024;
 

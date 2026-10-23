@@ -44,10 +44,13 @@ impl PassiveRule for SstiDetection {
                         severity: RuleSeverity::High,
                         confidence: 70,
                         cwe_id: Some(1336), // CWE-1336: Template Injection
-                        description: format!("Template syntax in URL reflected in response: {desc}. Possible SSTI vulnerability."),
+                        description: format!(
+                            "Template syntax in URL reflected in response: {desc}. Possible SSTI vulnerability."
+                        ),
                         evidence: format!("Pattern: {pattern}"),
                         references: vec![
-                            "https://portswigger.net/web-security/server-side-template-injection".to_string(),
+                            "https://portswigger.net/web-security/server-side-template-injection"
+                                .to_string(),
                         ],
                     });
                 }
@@ -95,7 +98,9 @@ impl PassiveRule for PathTraversalPatterns {
                     severity: RuleSeverity::High,
                     confidence: 85,
                     cwe_id: Some(22), // CWE-22: Path Traversal
-                    description: format!("System file path ({pattern}) found in response. May indicate path traversal vulnerability."),
+                    description: format!(
+                        "System file path ({pattern}) found in response. May indicate path traversal vulnerability."
+                    ),
                     evidence: format!("Pattern: {pattern}"),
                     references: vec![
                         "https://owasp.org/www-community/attacks/Path_Traversal".to_string(),
@@ -188,7 +193,7 @@ impl PassiveRule for LdapInjectionPatterns {
                             .to_string(),
                     evidence: format!("Pattern: {pattern}"),
                     references: vec![
-                        "https://owasp.org/www-community/attacks/LDAP_Injection".to_string()
+                        "https://owasp.org/www-community/attacks/LDAP_Injection".to_string(),
                     ],
                 });
             }

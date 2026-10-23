@@ -55,13 +55,13 @@ pub(crate) fn begin(
         Ok(_) => {
             return Err(recovery_error(
                 "an unfinished update recovery journal already exists",
-            ))
+            ));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             return Err(recovery_error(format!(
                 "inspect update recovery journal: {error}"
-            )))
+            )));
         }
     }
     let source = StableVersion::parse(source_version)?;
@@ -147,7 +147,7 @@ pub(crate) fn prune_restore_points(config: &Config, keep_root: Option<&Path>) ->
             return Err(recovery_error(format!(
                 "read update restore points {}: {error}",
                 updates.display()
-            )))
+            )));
         }
     };
 
@@ -356,7 +356,7 @@ fn read_journal(path: &Path) -> DomainResult<Option<UpdateJournal>> {
         Err(error) => {
             return Err(recovery_error(format!(
                 "inspect update recovery journal: {error}"
-            )))
+            )));
         }
     };
     if !metadata.is_file() || metadata.file_type().is_symlink() {
@@ -583,7 +583,7 @@ fn recovery_error(message: impl Into<String>) -> DomainError {
 mod tests {
     use super::*;
     use crate::config::{create_private_dir, write_private_file};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::sync::OnceLock;
     use tempfile::TempDir;
 

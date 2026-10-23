@@ -2,9 +2,9 @@ use crate::cookies::{
     CookieProfileStatus, ManagedCookie, StoredCookieProfile, ValidatedCookieProfile,
 };
 use crate::domain::{DomainError, DomainResult, ErrorCode, ProjectId};
-use crate::storage::projects::now_rfc3339;
 use crate::storage::Db;
-use rusqlite::{params, OptionalExtension};
+use crate::storage::projects::now_rfc3339;
+use rusqlite::{OptionalExtension, params};
 
 impl Db {
     pub async fn upsert_named_cookie_profile(
@@ -511,16 +511,18 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(db
-            .get_cookie_profile_for_url(first.id, "http://example.com:8080/path")
-            .await
-            .unwrap()
-            .is_some());
-        assert!(db
-            .get_cookie_profile_for_url(second.id, "https://example.com")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            db.get_cookie_profile_for_url(first.id, "http://example.com:8080/path")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            db.get_cookie_profile_for_url(second.id, "https://example.com")
+                .await
+                .unwrap()
+                .is_none()
+        );
         let status = db.list_cookie_profiles(first.id).await.unwrap();
         assert_eq!(status[0].names, vec!["sid"]);
         assert!(!serde_json::to_string(&status).unwrap().contains("secret"));
@@ -724,10 +726,11 @@ mod tests {
                 .is_none(),
             "named profiles do not affect the active jar"
         );
-        assert!(db
-            .delete_named_cookie_profile(project.id, "first")
-            .await
-            .unwrap());
+        assert!(
+            db.delete_named_cookie_profile(project.id, "first")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

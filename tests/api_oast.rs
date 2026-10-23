@@ -5,8 +5,8 @@
 //! leading 16-byte IV), so this exercises the full decrypt path the
 //! service-level unit tests stub out.
 
-use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use huntproxy::app::bootstrap_state;
 use huntproxy::config::{Config, OastConfig, OastProviderKind};
@@ -256,14 +256,18 @@ async fn oast_register_new_url_poll_decrypts_dedupes_and_correlates() {
         })
         .await
         .unwrap();
-    assert!(state
-        .oast
-        .poll(other.id.get(), session.session_id)
-        .await
-        .is_err());
-    assert!(state
-        .oast
-        .interactions(other.id.get(), session.session_id, None, None, None)
-        .await
-        .is_err());
+    assert!(
+        state
+            .oast
+            .poll(other.id.get(), session.session_id)
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .oast
+            .interactions(other.id.get(), session.session_id, None, None, None)
+            .await
+            .is_err()
+    );
 }

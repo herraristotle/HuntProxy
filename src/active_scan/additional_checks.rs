@@ -2,7 +2,7 @@
 //! SSRF, open redirect, CSRF. All probes go through `send_probe`.
 
 use super::checks::{
-    draft_for_payload, send_base, send_probe, ActiveCheck, CheckResult, CheckSeverity,
+    ActiveCheck, CheckResult, CheckSeverity, draft_for_payload, send_base, send_probe,
 };
 use super::job::ActiveScanJob;
 use crate::domain::*;

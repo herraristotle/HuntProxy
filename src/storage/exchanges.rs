@@ -1,12 +1,12 @@
 //! Immutable exchange records.
 
 use crate::domain::*;
-use crate::history::{filter_to_sql, FilterNode};
-use crate::policy::{present_headers, PresentationOptions};
-use crate::storage::annotations::load_labels_conn;
-use crate::storage::bodies::{store_body_conn, store_body_file_conn, StoredBody};
-use crate::storage::projects::{now_rfc3339, parse_time};
+use crate::history::{FilterNode, filter_to_sql};
+use crate::policy::{PresentationOptions, present_headers};
 use crate::storage::Db;
+use crate::storage::annotations::load_labels_conn;
+use crate::storage::bodies::{StoredBody, store_body_conn, store_body_file_conn};
+use crate::storage::projects::{now_rfc3339, parse_time};
 use rusqlite::params;
 use rusqlite::types::Value;
 use rusqlite::{Transaction, TransactionBehavior};
@@ -1577,12 +1577,16 @@ mod tests {
         assert!(!truncated);
         assert_eq!(target_files.len(), 2);
         assert!(target_files.iter().all(|file| file.exchange_id.is_none()));
-        assert!(target_files
-            .iter()
-            .any(|file| file.url == "https://assets.cdn.test/app.js?v=1"));
-        assert!(target_files
-            .iter()
-            .any(|file| file.url == "https://target.test/static/local.js"));
+        assert!(
+            target_files
+                .iter()
+                .any(|file| file.url == "https://assets.cdn.test/app.js?v=1")
+        );
+        assert!(
+            target_files
+                .iter()
+                .any(|file| file.url == "https://target.test/static/local.js")
+        );
 
         let cdn = target_files
             .iter()
@@ -1924,15 +1928,16 @@ mod tests {
         asset.lineage.browser_session_id = Some(session.id);
         let asset_id = db.insert_exchange(asset).await.unwrap();
 
-        assert!(db
-            .associate_browser_page_title(
+        assert!(
+            db.associate_browser_page_title(
                 project.id,
                 session.id,
                 "https://example.com/app?a=1",
                 "  Rendered   title ",
             )
             .await
-            .unwrap());
+            .unwrap()
+        );
         assert_eq!(
             db.get_exchange_detail(
                 project.id,
@@ -1946,8 +1951,8 @@ mod tests {
             .as_deref(),
             Some("Rendered title")
         );
-        assert!(db
-            .get_exchange_detail(
+        assert!(
+            db.get_exchange_detail(
                 project.id,
                 asset_id,
                 crate::policy::PresentationOptions::default(),
@@ -1956,6 +1961,7 @@ mod tests {
             .unwrap()
             .summary
             .page_title
-            .is_none());
+            .is_none()
+        );
     }
 }

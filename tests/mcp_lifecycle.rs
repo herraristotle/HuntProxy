@@ -2,7 +2,7 @@
 #![cfg(unix)]
 
 use huntproxy::config::Config;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -182,11 +182,13 @@ async fn agent_continues_after_idle_explicit_stop_restart_and_crash() {
     let initialized = agent.rpc("initialize", json!({})).await;
     assert_eq!(initialized["result"]["serverInfo"]["name"], "HuntProxy");
     let tools = agent.rpc("tools/list", json!({})).await;
-    assert!(tools["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|tool| tool["name"] == "huntproxy_restart"));
+    assert!(
+        tools["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "huntproxy_restart")
+    );
     let project = agent
         .tool(
             "projects",
@@ -208,10 +210,12 @@ async fn agent_continues_after_idle_explicit_stop_restart_and_crash() {
         )
         .await;
     assert_eq!(blocked["error"]["data"]["code"], "daemon_not_running");
-    assert!(blocked["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("huntproxy_restart"));
+    assert!(
+        blocked["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("huntproxy_restart")
+    );
     let restarted = agent.tool("huntproxy_restart", json!({})).await;
     assert_eq!(restarted["ok"], true);
     let saved = agent.tool("projects", json!({"action": "list"})).await;

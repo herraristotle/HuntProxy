@@ -596,7 +596,7 @@ fn compile_header_term(
         other => {
             return Err(DomainError::invalid(format!(
                 "operator {other} is not supported for {field}"
-            )))
+            )));
         }
     };
     let clause = format!("{prefix} AND {condition})");
@@ -637,9 +637,7 @@ fn compile_label_term(
             ))
         }
         "in" => {
-            let values = value
-                .as_array()
-                .ok_or_else(|| in_value_error("label"))?;
+            let values = value.as_array().ok_or_else(|| in_value_error("label"))?;
             if values.is_empty() {
                 return Ok("1=0".into());
             }
@@ -887,7 +885,7 @@ impl QueryParser {
                         _ => {
                             return Err(query_error(format!(
                                 "{text}() needs a field name; example: has(error)"
-                            )))
+                            )));
                         }
                     };
                     if !matches!(self.next(), Some(QueryToken::RightParen)) {
@@ -895,10 +893,9 @@ impl QueryParser {
                             "{text}() takes exactly one field name; example: has(error)"
                         )));
                     }
-                    let term = make_term(&field, "exists", serde_json::json!(present))
-                        .map_err(|error| {
-                            query_error(format!("filter parse error at `{field}`: {error}"))
-                        })?;
+                    let term = make_term(&field, "exists", serde_json::json!(present)).map_err(
+                        |error| query_error(format!("filter parse error at `{field}`: {error}")),
+                    )?;
                     return Ok(term);
                 }
                 parse_one_term(&text).map_err(|error| {
@@ -914,11 +911,9 @@ impl QueryParser {
                     )),
                 }
             }
-            Some(QueryToken::RightParen) => {
-                Err(query_error(
-                    "unexpected closing parenthesis; groups must contain a term and match `(` with `)`. Example: (method:GET OR method:POST)",
-                ))
-            }
+            Some(QueryToken::RightParen) => Err(query_error(
+                "unexpected closing parenthesis; groups must contain a term and match `(` with `)`. Example: (method:GET OR method:POST)",
+            )),
             None => Err(query_error(
                 "missing term in history filter; AND, OR and NOT require a following term. Example: method:GET OR method:POST",
             )),
@@ -1364,28 +1359,38 @@ mod tests {
             ("not_a_field", "Supported fields: exchange_id, host"),
         ] {
             let node = term(field, "eq", "value").unwrap();
-            assert!(filter_to_sql(&node)
-                .unwrap_err()
-                .to_string()
-                .contains(expected));
+            assert!(
+                filter_to_sql(&node)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(expected)
+            );
         }
-        assert!(filter_to_sql(&term("status", "between", "400").unwrap())
-            .unwrap_err()
-            .to_string()
-            .contains("Text example: status>=400"));
-        assert!(filter_to_sql(&term("request", "eq", "text").unwrap())
-            .unwrap_err()
-            .to_string()
-            .contains("request:~text"));
-        assert!(filter_to_sql(&term("label", "gt", "reviewed").unwrap())
-            .unwrap_err()
-            .to_string()
-            .contains("label:reviewed"));
-        for field in ["host", "label"] {
-            assert!(filter_to_sql(&term(field, "in", "first").unwrap())
+        assert!(
+            filter_to_sql(&term("status", "between", "400").unwrap())
                 .unwrap_err()
                 .to_string()
-                .contains(&format!("{field}:first OR {field}:second")));
+                .contains("Text example: status>=400")
+        );
+        assert!(
+            filter_to_sql(&term("request", "eq", "text").unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("request:~text")
+        );
+        assert!(
+            filter_to_sql(&term("label", "gt", "reviewed").unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("label:reviewed")
+        );
+        for field in ["host", "label"] {
+            assert!(
+                filter_to_sql(&term(field, "in", "first").unwrap())
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&format!("{field}:first OR {field}:second"))
+            );
         }
         let bad_value = FilterNode::Term {
             field: "status".into(),
@@ -1393,10 +1398,12 @@ mod tests {
             value: serde_json::json!({"value": 400}),
             subfield: None,
         };
-        assert!(filter_to_sql(&bad_value)
-            .unwrap_err()
-            .to_string()
-            .contains("for status"));
+        assert!(
+            filter_to_sql(&bad_value)
+                .unwrap_err()
+                .to_string()
+                .contains("for status")
+        );
     }
 
     #[test]
@@ -1668,10 +1675,12 @@ mod tests {
         // Comparison operators are not allowed after the value colon: parsing
         // keeps them so validation can name the colon as the fix.
         let colon_op = parse_one_term("status:!=404").unwrap();
-        assert!(filter_to_sql(&colon_op)
-            .unwrap_err()
-            .to_string()
-            .contains("remove the colon"));
+        assert!(
+            filter_to_sql(&colon_op)
+                .unwrap_err()
+                .to_string()
+                .contains("remove the colon")
+        );
         let filter = parse_text_query("header:~x").unwrap();
         filter_to_sql(&filter).unwrap();
     }

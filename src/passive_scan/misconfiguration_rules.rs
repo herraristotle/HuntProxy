@@ -154,7 +154,10 @@ impl PassiveRule for DangerousHttpMethods {
                 severity,
                 confidence: 95,
                 cwe_id: Some(16), // CWE-16: Configuration
-                description: format!("Dangerous HTTP methods enabled: {}. TRACE/TRACK enable XST attacks. PUT/DELETE may allow unauthorized modifications.", found.join(", ")),
+                description: format!(
+                    "Dangerous HTTP methods enabled: {}. TRACE/TRACK enable XST attacks. PUT/DELETE may allow unauthorized modifications.",
+                    found.join(", ")
+                ),
                 evidence: format!("Allow: {allow}"),
                 references: vec![
                     "https://owasp.org/www-community/attacks/Cross_Site_Tracing".to_string(),

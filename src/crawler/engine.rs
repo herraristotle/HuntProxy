@@ -2,14 +2,14 @@
 //! depth, rate, and robots checks; link discovery from HTML responses;
 //! request persistence through `ReplyService`.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -17,7 +17,7 @@ use crate::app::AppEvent;
 use crate::codec::decode_content_encodings;
 use crate::domain::*;
 use crate::history::FilterNode;
-use crate::policy::{url_is_in_scope, PresentationOptions};
+use crate::policy::{PresentationOptions, url_is_in_scope};
 use crate::reply::{ReplySendContext, ReplyService};
 use crate::storage::Db;
 
@@ -27,8 +27,8 @@ use super::rate_limit::RateLimiter;
 use super::robots::RobotsTxt;
 use super::stats::StatsTracker;
 use super::types::{
-    filter_links_by_strategy, CrawlRequest, CrawlRequestState, CrawlStats, CrawlerOptions,
-    LinkStrategy,
+    CrawlRequest, CrawlRequestState, CrawlStats, CrawlerOptions, LinkStrategy,
+    filter_links_by_strategy,
 };
 use super::{ajax, discover_links, forms, is_html_mime, sitemap};
 

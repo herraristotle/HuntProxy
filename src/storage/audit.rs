@@ -1,8 +1,8 @@
 //! Metadata-only audit events (never secret values).
 
 use crate::domain::{DomainError, DomainResult, ErrorCode, ProjectId};
-use crate::storage::projects::now_rfc3339;
 use crate::storage::Db;
+use crate::storage::projects::now_rfc3339;
 use rusqlite::params;
 use serde_json::Value;
 

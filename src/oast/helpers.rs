@@ -5,8 +5,8 @@
 
 use crate::domain::{DomainError, DomainResult, ErrorCode};
 use aes::Aes256;
-use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use rand::RngCore;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
@@ -153,9 +153,10 @@ mod tests {
     fn correlation_id_is_20_chars_of_xid_alphabet() {
         let id = anonymous_correlation_id();
         assert_eq!(id.len(), CORRELATION_ID_LEN);
-        assert!(id
-            .chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='v').contains(&c)));
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='v').contains(&c))
+        );
         // Distinct on consecutive calls.
         assert_ne!(anonymous_correlation_id(), id);
     }
@@ -183,14 +184,18 @@ mod tests {
         let cid = anonymous_correlation_id();
         let label = mint_label(&cid);
         assert_eq!(label.len(), CORRELATION_ID_LEN + NONCE_LEN);
-        assert!(label
-            .chars()
-            .take(CORRELATION_ID_LEN)
-            .all(|c| XID_ALPHABET.contains(&(c as u8))));
-        assert!(label
-            .chars()
-            .skip(CORRELATION_ID_LEN)
-            .all(|c| ZBASE32_ALPHABET.contains(&(c as u8))));
+        assert!(
+            label
+                .chars()
+                .take(CORRELATION_ID_LEN)
+                .all(|c| XID_ALPHABET.contains(&(c as u8)))
+        );
+        assert!(
+            label
+                .chars()
+                .skip(CORRELATION_ID_LEN)
+                .all(|c| ZBASE32_ALPHABET.contains(&(c as u8)))
+        );
     }
 
     #[test]

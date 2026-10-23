@@ -156,9 +156,11 @@ async fn flow_node_catalog_lists_engine_nodes() {
     let nodes = body["nodes"].as_array().expect("node catalog");
     assert!(nodes.len() >= 12);
     assert!(nodes.iter().any(|node| node["type_name"] == "flow/if-else"));
-    assert!(nodes
-        .iter()
-        .any(|node| node["type_name"] == "flow/set-color"));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["type_name"] == "flow/set-color")
+    );
 }
 
 #[tokio::test]
@@ -647,10 +649,14 @@ async fn catalog_lists_new_filter_nodes() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = json_response(response).await;
     let nodes = body["nodes"].as_array().expect("node catalog");
-    assert!(nodes
-        .iter()
-        .any(|node| node["type_name"] == "flow/query-match"));
-    assert!(nodes
-        .iter()
-        .any(|node| node["type_name"] == "flow/in-scope"));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["type_name"] == "flow/query-match")
+    );
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["type_name"] == "flow/in-scope")
+    );
 }

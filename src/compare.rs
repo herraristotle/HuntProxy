@@ -8,7 +8,7 @@ use crate::domain::{
     BodyRepresentation, CompletionState, DomainResult, ExchangeId, ExchangeSummary, HeaderEntry,
     MessageSide, ProjectId,
 };
-use crate::policy::{is_noisy_header, is_sensitive_header, REDACTED_PLACEHOLDER};
+use crate::policy::{REDACTED_PLACEHOLDER, is_noisy_header, is_sensitive_header};
 use crate::storage::Db;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -594,7 +594,7 @@ fn body_warning_order(warning: &BodyWarning) -> u8 {
 mod tests {
     use super::*;
     use crate::domain::{CaptureQuality, CompletionState, ExchangeSource, TransportProvenance};
-    use flate2::{write::GzEncoder, Compression};
+    use flate2::{Compression, write::GzEncoder};
     use std::io::Write;
     use time::OffsetDateTime;
 
@@ -752,17 +752,21 @@ mod tests {
         right.summary.response_length = Some(13);
 
         let comparison = compare_exchange_data(&left, &right, &CompareOptions::default());
-        assert!(comparison
-            .response
-            .body
-            .text_diff
-            .unwrap()
-            .contains("decoded right"));
-        assert!(!comparison
-            .response
-            .body
-            .warnings
-            .contains(&BodyWarning::LeftDecodeFailed));
+        assert!(
+            comparison
+                .response
+                .body
+                .text_diff
+                .unwrap()
+                .contains("decoded right")
+        );
+        assert!(
+            !comparison
+                .response
+                .body
+                .warnings
+                .contains(&BodyWarning::LeftDecodeFailed)
+        );
     }
 
     #[test]
@@ -778,21 +782,27 @@ mod tests {
 
         let comparison = compare_exchange_data(&left, &right, &CompareOptions::default());
         assert_eq!(comparison.response.body.equal, Some(false));
-        assert!(comparison
-            .response
-            .body
-            .warnings
-            .contains(&BodyWarning::LeftBinary));
-        assert!(comparison
-            .response
-            .body
-            .warnings
-            .contains(&BodyWarning::LeftTruncated));
-        assert!(comparison
-            .response
-            .body
-            .warnings
-            .contains(&BodyWarning::RightUnavailable));
+        assert!(
+            comparison
+                .response
+                .body
+                .warnings
+                .contains(&BodyWarning::LeftBinary)
+        );
+        assert!(
+            comparison
+                .response
+                .body
+                .warnings
+                .contains(&BodyWarning::LeftTruncated)
+        );
+        assert!(
+            comparison
+                .response
+                .body
+                .warnings
+                .contains(&BodyWarning::RightUnavailable)
+        );
         assert!(comparison.response.body.text_diff.is_none());
     }
 

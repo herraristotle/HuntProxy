@@ -1,7 +1,7 @@
-use super::{full_body, header_entries, request_url, ProxyBody};
+use super::{ProxyBody, full_body, header_entries, request_url};
 use crate::app::{AppEvent, AppState};
 use crate::domain::*;
-use crate::policy::scope::{resolve_validated_dial, url_is_in_scope, TargetRef};
+use crate::policy::scope::{TargetRef, resolve_validated_dial, url_is_in_scope};
 use crate::storage::NewExchange;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{client_async_with_config, WebSocketStream};
+use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
+use tokio_tungstenite::{WebSocketStream, client_async_with_config};
 use url::Url;
 
 trait AsyncSocket: AsyncRead + AsyncWrite + Unpin + Send {}

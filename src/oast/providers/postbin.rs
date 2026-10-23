@@ -2,8 +2,8 @@
 //! Port of `quickssrf/packages/backend/src/providers/postbin/client.ts`.
 
 use super::{
-    provider_error, unsupported_new_url, Interaction, OastProvider, ProviderRegistration,
-    RegisterOptions,
+    Interaction, OastProvider, ProviderRegistration, RegisterOptions, provider_error,
+    unsupported_new_url,
 };
 use crate::config::OastProviderKind;
 use crate::domain::DomainResult;

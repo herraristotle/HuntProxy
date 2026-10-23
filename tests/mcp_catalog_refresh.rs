@@ -2,7 +2,7 @@
 #![cfg(unix)]
 
 use huntproxy::config::Config;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -374,11 +374,13 @@ async fn private_catalog_route_is_read_only_and_returns_current_tools() {
     let idle_after = state.activity.idle_for();
     assert_eq!(response["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(response["protocol"], huntproxy::INTERNAL_PROTOCOL_VERSION);
-    assert!(response["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|tool| tool["name"] == "huntproxy_restart"));
+    assert!(
+        response["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "huntproxy_restart")
+    );
     assert!(
         idle_after >= idle_before,
         "catalog polling must not extend daemon lifetime"

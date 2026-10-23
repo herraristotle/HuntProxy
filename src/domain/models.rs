@@ -2,8 +2,8 @@
 
 use super::ids::*;
 use serde::{Deserialize, Serialize};
-use time::serde::rfc3339;
 use time::OffsetDateTime;
+use time::serde::rfc3339;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {

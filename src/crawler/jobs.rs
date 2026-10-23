@@ -1,7 +1,7 @@
 //! Managed crawl jobs: start, cancel, list, and worker orchestration.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};

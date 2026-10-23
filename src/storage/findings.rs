@@ -1,8 +1,8 @@
 //! Project findings linked to captured exchanges.
 
 use crate::domain::*;
-use crate::storage::projects::{now_rfc3339, parse_time};
 use crate::storage::Db;
+use crate::storage::projects::{now_rfc3339, parse_time};
 use rusqlite::params;
 
 const MAX_FINDING_TITLE: usize = 256;

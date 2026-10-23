@@ -1,8 +1,8 @@
 //! Flow definition persistence (project-scoped, edition-1 JSON).
 
 use crate::domain::*;
-use crate::storage::projects::{now_rfc3339, parse_time};
 use crate::storage::Db;
+use crate::storage::projects::{now_rfc3339, parse_time};
 use rusqlite::params;
 
 impl Db {

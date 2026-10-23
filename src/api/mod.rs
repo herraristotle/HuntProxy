@@ -8,14 +8,14 @@ use crate::policy::PresentationOptions;
 use crate::storage::CreateCaptureSession;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
-use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::StatusCode;
+use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
-use futures::stream::Stream;
 use futures::StreamExt;
+use futures::stream::Stream;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -703,7 +703,7 @@ async fn extension_job_results(
         _ => {
             return error_response(DomainError::invalid(
                 "view must be summary, findings, or full",
-            ))
+            ));
         }
     };
     match state.plugins.results(
@@ -1752,7 +1752,7 @@ async fn import_flow(
         Err(error) => {
             return error_response(DomainError::invalid(format!(
                 "definition is not a native HuntProxy flow: {error}"
-            )))
+            )));
         }
     };
     if let Err(error) = crate::flow::validate_flow(&definition) {
@@ -2370,7 +2370,7 @@ async fn reply_send_raw(
             Err(error) => {
                 return error_response(DomainError::invalid(format!(
                     "invalid base64 request: {error}"
-                )))
+                )));
             }
         },
         _ => return error_response(DomainError::invalid("encoding must be utf8 or base64")),
@@ -2837,7 +2837,7 @@ async fn send_websocket_message(
         _ => {
             return error_response(DomainError::invalid(
                 "direction must be to_server or to_client",
-            ))
+            ));
         }
     };
     match state
@@ -3032,7 +3032,7 @@ async fn browser_cdp(
                 None => {
                     return error_response(DomainError::invalid(
                         "session_id is required for CDP enable and disable",
-                    ))
+                    ));
                 }
             };
             if body.op == "enable" {
@@ -3044,7 +3044,7 @@ async fn browser_cdp(
         _ => {
             return error_response(DomainError::invalid(
                 "CDP op must be enable, status, or disable",
-            ))
+            ));
         }
     };
     match result {

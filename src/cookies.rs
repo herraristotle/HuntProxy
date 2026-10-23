@@ -760,10 +760,12 @@ mod tests {
                 "wrong cookie scope for {url}"
             );
         }
-        assert!(named
-            .cookie_header_for_url("https://other.co.uk/")
-            .unwrap()
-            .is_none());
+        assert!(
+            named
+                .cookie_header_for_url("https://other.co.uk/")
+                .unwrap()
+                .is_none()
+        );
 
         let exact = validate_cookie_profile("https://example.co.uk", input.clone()).unwrap();
         assert_eq!(exact.managed_cookies.unwrap().len(), 1);
@@ -794,10 +796,12 @@ mod tests {
             named.managed_cookies.as_ref().unwrap()[0].domain,
             "www.first.github.io"
         );
-        assert!(named
-            .cookie_header_for_url("https://first.github.io")
-            .unwrap()
-            .is_none());
+        assert!(
+            named
+                .cookie_header_for_url("https://first.github.io")
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             named
                 .cookie_header_for_url("https://www.first.github.io")
@@ -813,10 +817,12 @@ mod tests {
         let named = validate_named_cookie_profile("https://example.com", input.into()).unwrap();
         assert!(named.managed_cookies.is_none());
         assert_eq!(named.cookie_header, input);
-        assert!(named
-            .cookie_header_for_url("https://www.example.com")
-            .unwrap()
-            .is_none());
+        assert!(
+            named
+                .cookie_header_for_url("https://www.example.com")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -925,10 +931,12 @@ mod tests {
                 .as_deref(),
             Some("root=root-value")
         );
-        assert!(profile
-            .cookie_header_for_url("http://app.example.com/admin/users")
-            .unwrap()
-            .is_none());
+        assert!(
+            profile
+                .cookie_header_for_url("http://app.example.com/admin/users")
+                .unwrap()
+                .is_none()
+        );
         profile.managed_cookies.as_mut().unwrap()[1].expires = Some(1.0);
         assert_eq!(
             profile

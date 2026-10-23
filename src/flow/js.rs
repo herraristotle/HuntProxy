@@ -8,14 +8,14 @@
 //! as lazy Request/Response handles whose headers/body/raw are loaded from
 //! the database on demand.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use rquickjs::promise::MaybePromise;
 use rquickjs::{CatchResultExt, Context, Ctx, Function, Runtime};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::{
@@ -389,7 +389,7 @@ fn sdk_spec_to_draft(spec: &Value) -> DomainResult<ReplyDraft> {
                 other => {
                     return Err(DomainError::invalid(format!(
                         "header `{name}` must be a string or array, got {other}"
-                    )))
+                    )));
                 }
             };
             for value in values {

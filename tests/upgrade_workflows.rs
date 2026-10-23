@@ -5,15 +5,15 @@
 
 #![cfg(unix)]
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -296,8 +296,8 @@ fn v011_data_and_full_bundle_upgrade_to_current_release() {
         .expect("default browser profile");
     assert_eq!(default["has_state"], true);
     assert_eq!(
-        serde_json::from_slice::<Value>(&fs::read(&legacy_browser_state).unwrap()).unwrap()
-            ["local_storage"][format!("http://{}", fixture.address)]["upgrade-marker"],
+        serde_json::from_slice::<Value>(&fs::read(&legacy_browser_state).unwrap()).unwrap()["local_storage"]
+            [format!("http://{}", fixture.address)]["upgrade-marker"],
         "v0.1.1"
     );
     assert_browser_roundtrip(&client, &api_base, project_id, &fixture);
@@ -586,9 +586,11 @@ fn assert_custom_plugin_loaded(client: &reqwest::blocking::Client, api_base: &st
         &format!("{api_base}/api/v1/extensions"),
         None,
     );
-    assert!(extensions["plugins"]
-        .as_array()
-        .is_some_and(|plugins| plugins.iter().any(|plugin| plugin["id"] == "local-helper")));
+    assert!(
+        extensions["plugins"]
+            .as_array()
+            .is_some_and(|plugins| plugins.iter().any(|plugin| plugin["id"] == "local-helper"))
+    );
     assert_eq!(extensions["load_issues"], json!([]));
 }
 
@@ -604,9 +606,11 @@ fn assert_project_state(
         &format!("{api_base}/api/v1/projects/{project_id}/history"),
         None,
     );
-    assert!(history["items"]
-        .as_array()
-        .is_some_and(|items| { items.iter().any(|item| item["path"] == "/captured") }));
+    assert!(
+        history["items"]
+            .as_array()
+            .is_some_and(|items| { items.iter().any(|item| item["path"] == "/captured") })
+    );
 
     let tabs = request_json(
         client,
@@ -635,9 +639,11 @@ fn assert_project_state(
         .iter()
         .find(|profile| profile["name"] == "member")
         .expect("named cookie profile");
-    assert!(named["profile"]["names"]
-        .as_array()
-        .is_some_and(|names| names.iter().any(|name| name == "session")));
+    assert!(
+        named["profile"]["names"]
+            .as_array()
+            .is_some_and(|names| names.iter().any(|name| name == "session"))
+    );
 }
 
 fn assert_browser_roundtrip(

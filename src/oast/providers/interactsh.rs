@@ -1,8 +1,8 @@
 //! Mainline interactsh protocol provider (self-hosted server).
 
 use super::{
-    protocol_error, provider_error, Interaction, OastProvider, ProviderRegistration,
-    RegisterOptions,
+    Interaction, OastProvider, ProviderRegistration, RegisterOptions, protocol_error,
+    provider_error,
 };
 use crate::config::OastProviderKind;
 use crate::domain::DomainResult;

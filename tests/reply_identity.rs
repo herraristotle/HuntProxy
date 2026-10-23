@@ -207,14 +207,18 @@ fn identity_contract_is_exclusive_and_omission_is_compatible() {
     ] {
         assert!(serde_json::from_value::<ReplyIdentity>(value).is_err());
     }
-    assert!(serde_json::from_value::<ReplyDraft>(serde_json::json!({}))
-        .unwrap()
-        .identity
-        .is_none());
-    assert!(serde_json::to_value(ReplyDraft::default())
-        .unwrap()
-        .get("identity")
-        .is_none());
+    assert!(
+        serde_json::from_value::<ReplyDraft>(serde_json::json!({}))
+            .unwrap()
+            .identity
+            .is_none()
+    );
+    assert!(
+        serde_json::to_value(ReplyDraft::default())
+            .unwrap()
+            .get("identity")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -229,10 +233,12 @@ async fn concurrent_requests_select_identity_without_mutating_default() {
         assert!(result.unwrap().identity.is_some());
     }
     let omitted = f.send(draft(None), None).await.unwrap();
-    assert!(serde_json::to_value(&omitted)
-        .unwrap()
-        .get("identity")
-        .is_none());
+    assert!(
+        serde_json::to_value(&omitted)
+            .unwrap()
+            .get("identity")
+            .is_none()
+    );
     let requests = f.recorder.requests.lock().unwrap();
     let mut cookies = requests[..3]
         .iter()
@@ -343,15 +349,16 @@ async fn named_removes_inherited_credentials_and_blocks_rule_credentials() {
 async fn invalid_named_selection_fails_before_traffic() {
     let f = Fixture::new().await;
     for profile in ["missing", "invalid/profile"] {
-        assert!(f
-            .send(
+        assert!(
+            f.send(
                 draft(Some(ReplyIdentity::Named {
                     profile: profile.into()
                 })),
                 None
             )
             .await
-            .is_err());
+            .is_err()
+        );
     }
     f.db.upsert_named_cookie_profile(
         f.project,
@@ -370,8 +377,8 @@ async fn invalid_named_selection_fails_before_traffic() {
         .await
         .unwrap_err();
     assert!(e.to_string().contains("no applicable cookies"));
-    assert!(f
-        .send(
+    assert!(
+        f.send(
             ReplyDraft {
                 header_overrides: vec![HeaderPatch {
                     name: "Cookie".into(),
@@ -384,15 +391,16 @@ async fn invalid_named_selection_fails_before_traffic() {
         .await
         .unwrap_err()
         .to_string()
-        .contains("Cookie override"));
+        .contains("Cookie override")
+    );
     let mut expired = validate_cookie_profile("http://127.0.0.1",
         r#"[{"name":"sid","value":"expired","domain":"127.0.0.1","path":"/","expirationDate":4102444800}]"#.into()).unwrap();
     expired.managed_cookies.as_mut().unwrap()[0].expires = Some(1.0);
     f.db.upsert_named_cookie_profile(f.project, "expired", expired)
         .await
         .unwrap();
-    assert!(f
-        .send(
+    assert!(
+        f.send(
             draft(Some(ReplyIdentity::Named {
                 profile: "expired".into()
             })),
@@ -401,7 +409,8 @@ async fn invalid_named_selection_fails_before_traffic() {
         .await
         .unwrap_err()
         .to_string()
-        .contains("no applicable cookies"));
+        .contains("no applicable cookies")
+    );
     assert!(f.recorder.requests.lock().unwrap().is_empty());
 }
 
@@ -427,12 +436,13 @@ async fn identity_checks_effective_destination_after_url_rules() {
     )
     .await
     .unwrap();
-    assert!(f
-        .send(draft(named()), None)
-        .await
-        .unwrap_err()
-        .to_string()
-        .contains("no applicable cookies"));
+    assert!(
+        f.send(draft(named()), None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no applicable cookies")
+    );
     f.send(draft(Some(ReplyIdentity::Anonymous {})), None)
         .await
         .unwrap();
@@ -442,8 +452,8 @@ async fn identity_checks_effective_destination_after_url_rules() {
         assert_eq!(requests[0].0, "http://127.0.0.2/");
         assert!(header(&requests[0].1, "Cookie").is_none());
     }
-    assert!(f
-        .send(
+    assert!(
+        f.send(
             ReplyDraft {
                 url: Some("http://fixture:password@127.0.0.1/".into()),
                 ..draft(Some(ReplyIdentity::Anonymous {}))
@@ -453,7 +463,8 @@ async fn identity_checks_effective_destination_after_url_rules() {
         .await
         .unwrap_err()
         .to_string()
-        .contains("URL credentials"));
+        .contains("URL credentials")
+    );
     assert_eq!(f.recorder.requests.lock().unwrap().len(), 1);
 }
 
@@ -487,7 +498,7 @@ async fn anonymous_does_not_dispatch_redirects_or_store_response_cookie() {
 
 #[tokio::test]
 async fn real_semantic_transport_keeps_anonymous_redirect_request_credential_free() {
-    use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path};
     let server = MockServer::start().await;
     Mock::given(path("/baseline"))
         .respond_with(
@@ -626,9 +637,11 @@ async fn fuzz_job_pins_named_cookie_and_preserves_case_provenance() {
             f.db.load_raw_headers(f.project, case.exchange_id.unwrap(), MessageSide::Request)
                 .await
                 .unwrap();
-        assert!(headers
-            .iter()
-            .any(|h| h.name.eq_ignore_ascii_case("Cookie") && h.value == b"sid=secondary"));
+        assert!(
+            headers
+                .iter()
+                .any(|h| h.name.eq_ignore_ascii_case("Cookie") && h.value == b"sid=secondary")
+        );
     }
     for (_, headers) in f.recorder.requests.lock().unwrap().iter() {
         assert_eq!(header(headers, "Cookie"), Some(b"sid=secondary".as_slice()));

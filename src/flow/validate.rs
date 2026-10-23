@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::domain::{DomainError, DomainResult, FlowDefinition, FlowKind, FlowProperty};
 
-use super::registry::{node_info, NodeInfo, ValueKind};
+use super::registry::{NodeInfo, ValueKind, node_info};
 
 pub fn validate_flow(definition: &FlowDefinition) -> DomainResult<()> {
     definition.validate()?;

@@ -2,7 +2,7 @@
 
 use crate::domain::{DomainError, DomainResult, ErrorCode};
 use base64::Engine;
-use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use std::io::Read;
 
 const MAX_TRANSFORM_OUTPUT: usize = 10 * 1024 * 1024;

@@ -2,17 +2,17 @@
 
 use crate::app::AppState;
 use crate::browser::BrowserAction;
-use crate::codec::{apply_pipeline, Transform};
+use crate::codec::{Transform, apply_pipeline};
 use crate::config::Config;
 use crate::domain::*;
 use crate::fuzzer::FuzzTemplate;
-use crate::history::{parse_text_query, query_error, HISTORY_QUERY_SYNTAX};
+use crate::history::{HISTORY_QUERY_SYNTAX, parse_text_query, query_error};
 use crate::oast::load_oast_job_context;
-use crate::policy::{is_sensitive_header, PresentationOptions};
+use crate::policy::{PresentationOptions, is_sensitive_header};
 use crate::storage::CreateCaptureSession;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -579,7 +579,9 @@ fn local_tool_defs() -> Value {
             .iter_mut()
             .find(|tool| tool["name"] == "huntproxy_stop")
         {
-            stop["description"] = json!("Gracefully stop HuntProxy and all managed browsers. The in-process MCP server cannot restart itself; reconnect to continue. Use only when the user explicitly asks to stop HuntProxy.");
+            stop["description"] = json!(
+                "Gracefully stop HuntProxy and all managed browsers. The in-process MCP server cannot restart itself; reconnect to continue. Use only when the user explicitly asks to stop HuntProxy."
+            );
         }
     }
     definitions
@@ -743,8 +745,8 @@ fn write_notification(method: &str) {
 async fn call_daemon_tool(config: &Config, name: &str, args: Value) -> DomainResult<Value> {
     use bytes::Bytes;
     use http_body_util::{BodyExt, Full};
-    use hyper::client::conn::http1;
     use hyper::Request;
+    use hyper::client::conn::http1;
     use hyper_util::rt::TokioIo;
 
     let stream = tokio::net::UnixStream::connect(config.socket_path())
@@ -1255,7 +1257,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                     _ => {
                         return Err(DomainError::invalid(
                             "view must be summary, findings, or full",
-                        ))
+                        ));
                     }
                 };
                 let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -1529,7 +1531,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         _ => {
                             return Err(DomainError::invalid(
                                 "provide exactly one of cookie or file_path",
-                            ))
+                            ));
                         }
                     };
                     if let Some(name) = args.get("profile_name").and_then(Value::as_str) {
@@ -1641,7 +1643,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 Some(_) => {
                     return Err(query_error(format!(
                         "history_search q must be a query string; omit q to list history. {HISTORY_QUERY_SYNTAX}"
-                    )))
+                    )));
                 }
             };
             let filter = query
@@ -2654,7 +2656,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 _ => {
                     return Err(DomainError::invalid(
                         "mode must be sequential, single_packet_attack, or last_byte_sync",
-                    ))
+                    ));
                 }
             }
 
@@ -3363,7 +3365,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                         _ => {
                             return Err(DomainError::invalid(
                                 "direction must be to_server or to_client",
-                            ))
+                            ));
                         }
                     };
                     let payload = args
@@ -3513,7 +3515,7 @@ pub async fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> DomainR
                 _ => {
                     return Err(DomainError::invalid(
                         "op must be enable, status, or disable",
-                    ))
+                    ));
                 }
             };
             Ok(json!(result))
@@ -3996,13 +3998,17 @@ mod tests {
             result["structuredContent"]["data"]["image_in_content"],
             true
         );
-        assert!(result["structuredContent"]["data"]
-            .get("image_base64")
-            .is_none());
-        assert!(!result["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains(encoded));
+        assert!(
+            result["structuredContent"]["data"]
+                .get("image_base64")
+                .is_none()
+        );
+        assert!(
+            !result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains(encoded)
+        );
     }
 
     #[test]
@@ -4032,10 +4038,12 @@ mod tests {
             .iter()
             .find(|branch| branch["properties"]["type"]["const"] == "navigate")
             .unwrap();
-        assert!(navigate["required"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("url")));
+        assert!(
+            navigate["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("url"))
+        );
         let request = branches
             .iter()
             .find(|branch| {
@@ -4049,10 +4057,12 @@ mod tests {
             request["properties"]["max_response_bytes"]["maximum"],
             65_536
         );
-        assert!(schema["description"]
-            .as_str()
-            .unwrap()
-            .contains("browser_cdp remains available"));
+        assert!(
+            schema["description"]
+                .as_str()
+                .unwrap()
+                .contains("browser_cdp remains available")
+        );
     }
 
     #[cfg(unix)]
@@ -4253,21 +4263,25 @@ mod tests {
     #[test]
     fn in_process_backend_does_not_advertise_daemon_restart() {
         let tools = local_tool_defs();
-        assert!(!tools
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|tool| tool["name"] == "huntproxy_restart"));
+        assert!(
+            !tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "huntproxy_restart")
+        );
         let stop = tools
             .as_array()
             .unwrap()
             .iter()
             .find(|tool| tool["name"] == "huntproxy_stop")
             .unwrap();
-        assert!(stop["description"]
-            .as_str()
-            .unwrap()
-            .contains("cannot restart itself"));
+        assert!(
+            stop["description"]
+                .as_str()
+                .unwrap()
+                .contains("cannot restart itself")
+        );
     }
 
     #[test]
@@ -4306,11 +4320,13 @@ mod tests {
             .iter()
             .find(|tool| tool["name"] == "projects")
             .unwrap();
-        assert!(projects["inputSchema"]["properties"]["action"]["enum"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|action| action == "usage"));
+        assert!(
+            projects["inputSchema"]["properties"]["action"]["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|action| action == "usage")
+        );
         let reply = tools
             .iter()
             .find(|tool| tool["name"] == "reply_send")
@@ -4324,9 +4340,11 @@ mod tests {
             reply["inputSchema"]["properties"]["draft"]["properties"]["inheritance"]["default"],
             "full_request"
         );
-        assert!(reply["inputSchema"]["properties"]["draft"]["properties"]
-            .get("body_text")
-            .is_some());
+        assert!(
+            reply["inputSchema"]["properties"]["draft"]["properties"]
+                .get("body_text")
+                .is_some()
+        );
         let identity = &reply["inputSchema"]["properties"]["draft"]["properties"]["identity"];
         assert_eq!(identity["oneOf"][2]["required"], json!(["mode", "profile"]));
         assert_eq!(identity["oneOf"][2]["additionalProperties"], false);
@@ -4335,8 +4353,7 @@ mod tests {
             .find(|tool| tool["name"] == "fuzz_start")
             .unwrap();
         assert_eq!(
-            fuzz["inputSchema"]["properties"]["template"]["properties"]["draft"]["properties"]
-                ["identity"],
+            fuzz["inputSchema"]["properties"]["template"]["properties"]["draft"]["properties"]["identity"],
             *identity
         );
         for selection in [
@@ -4347,10 +4364,12 @@ mod tests {
             let draft: ReplyDraft = serde_json::from_value(json!({"identity":selection})).unwrap();
             assert!(draft.identity.is_some());
         }
-        assert!(serde_json::from_value::<ReplyDraft>(
-            json!({"identity":{"mode":"anonymous","profile":"member"}})
-        )
-        .is_err());
+        assert!(
+            serde_json::from_value::<ReplyDraft>(
+                json!({"identity":{"mode":"anonymous","profile":"member"}})
+            )
+            .is_err()
+        );
         let cookies = tools.iter().find(|tool| tool["name"] == "cookies").unwrap();
         let cookie_inputs = cookies["inputSchema"]["properties"]["cookie"]["oneOf"]
             .as_array()
@@ -4415,15 +4434,19 @@ mod tests {
             browser_cdp["inputSchema"]["properties"]["op"]["enum"],
             json!(["enable", "status", "disable"])
         );
-        assert!(!browser_cdp["inputSchema"]["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "session_id"));
-        assert!(browser_cdp["description"]
-            .as_str()
-            .unwrap()
-            .contains("ssh -N -L 9222"));
+        assert!(
+            !browser_cdp["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "session_id")
+        );
+        assert!(
+            browser_cdp["description"]
+                .as_str()
+                .unwrap()
+                .contains("ssh -N -L 9222")
+        );
         let browser_profiles = tools
             .iter()
             .find(|tool| tool["name"] == "browser_profiles")
@@ -4444,28 +4467,36 @@ mod tests {
             browser_start["inputSchema"]["properties"]["cookie_profile"]["pattern"],
             "^[A-Za-z0-9_-]{1,64}$"
         );
-        assert!(browser_start["description"]
-            .as_str()
-            .unwrap()
-            .contains("cookies(profile_name=...)"));
+        assert!(
+            browser_start["description"]
+                .as_str()
+                .unwrap()
+                .contains("cookies(profile_name=...)")
+        );
         let browser_manage = tools
             .iter()
             .find(|tool| tool["name"] == "browser_manage")
             .unwrap();
-        assert!(browser_manage["description"]
-            .as_str()
-            .unwrap()
-            .contains("per-project capacity including ephemeral sessions"));
-        assert!(browser_manage["inputSchema"]["properties"]["op"]["enum"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "stop_all"));
-        assert!(browser_manage["inputSchema"]["properties"]["op"]["enum"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "reset_profile"));
+        assert!(
+            browser_manage["description"]
+                .as_str()
+                .unwrap()
+                .contains("per-project capacity including ephemeral sessions")
+        );
+        assert!(
+            browser_manage["inputSchema"]["properties"]["op"]["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "stop_all")
+        );
+        assert!(
+            browser_manage["inputSchema"]["properties"]["op"]["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "reset_profile")
+        );
         assert_eq!(
             browser_manage["inputSchema"]["properties"]["confirm"]["default"],
             false
@@ -4474,24 +4505,32 @@ mod tests {
             browser_manage["inputSchema"]["properties"]["profile"]["default"],
             "default"
         );
-        assert!(!browser_manage["inputSchema"]["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "session_id"));
-        assert!(!browser_manage["inputSchema"]["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "chromium_reason"));
-        assert!(browser_manage["inputSchema"]["properties"]
-            .get("chromium_reason")
-            .is_none());
-        assert!(!browser_manage["inputSchema"]["properties"]["op"]["enum"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "switch_chromium"));
+        assert!(
+            !browser_manage["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "session_id")
+        );
+        assert!(
+            !browser_manage["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "chromium_reason")
+        );
+        assert!(
+            browser_manage["inputSchema"]["properties"]
+                .get("chromium_reason")
+                .is_none()
+        );
+        assert!(
+            !browser_manage["inputSchema"]["properties"]["op"]["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "switch_chromium")
+        );
         let browser_start = tools
             .iter()
             .find(|tool| tool["name"] == "browser_start")
@@ -4504,17 +4543,23 @@ mod tests {
             browser_start["inputSchema"]["properties"]["profile"]["pattern"],
             "^[A-Za-z0-9_-]{1,64}$"
         );
-        assert!(browser_start["inputSchema"]["properties"]
-            .get("engine_policy")
-            .is_none());
-        assert!(!browser_start["inputSchema"]["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "chromium_reason"));
-        assert!(browser_start["inputSchema"]["properties"]
-            .get("chromium_reason")
-            .is_none());
+        assert!(
+            browser_start["inputSchema"]["properties"]
+                .get("engine_policy")
+                .is_none()
+        );
+        assert!(
+            !browser_start["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "chromium_reason")
+        );
+        assert!(
+            browser_start["inputSchema"]["properties"]
+                .get("chromium_reason")
+                .is_none()
+        );
         let fuzz_start = tools
             .iter()
             .find(|tool| tool["name"] == "fuzz_start")
@@ -4534,8 +4579,7 @@ mod tests {
             2000
         );
         assert_eq!(
-            template["properties"]["insertion_points"]["items"]["properties"]["location"]
-                ["pattern"],
+            template["properties"]["insertion_points"]["items"]["properties"]["location"]["pattern"],
             "^(url|body|header:.+)$"
         );
         let js_files = tools
@@ -4561,13 +4605,17 @@ mod tests {
         );
         assert!(tools.iter().any(|tool| tool["name"] == "huntproxy_stop"));
         let sitemap = tools.iter().find(|tool| tool["name"] == "sitemap").unwrap();
-        assert!(sitemap["description"]
-            .as_str()
-            .unwrap()
-            .contains("lightweight list of hosts and route counts"));
-        assert!(sitemap["inputSchema"]["properties"]
-            .get("path_prefix")
-            .is_some());
+        assert!(
+            sitemap["description"]
+                .as_str()
+                .unwrap()
+                .contains("lightweight list of hosts and route counts")
+        );
+        assert!(
+            sitemap["inputSchema"]["properties"]
+                .get("path_prefix")
+                .is_some()
+        );
         assert_eq!(sitemap["inputSchema"]["additionalProperties"], false);
         assert!(tools.iter().any(|tool| tool["name"] == "findings"));
         let overview = tools
@@ -4575,10 +4623,12 @@ mod tests {
             .find(|tool| tool["name"] == "overview")
             .unwrap();
         assert_eq!(overview["inputSchema"]["required"], json!(["project_id"]));
-        assert!(overview["description"]
-            .as_str()
-            .unwrap()
-            .contains("captured replies sent"));
+        assert!(
+            overview["description"]
+                .as_str()
+                .unwrap()
+                .contains("captured replies sent")
+        );
         let body = tools
             .iter()
             .find(|tool| tool["name"] == "exchange_body")
@@ -4591,16 +4641,20 @@ mod tests {
             body["inputSchema"]["properties"]["max_bytes"]["maximum"],
             1048576
         );
-        assert!(body["description"]
-            .as_str()
-            .unwrap()
-            .contains("without re-fetching it or using HTTP Range"));
-        assert!(tools
-            .iter()
-            .find(|tool| tool["name"] == "reply_send")
-            .unwrap()["description"]
-            .as_str()
-            .unwrap()
-            .contains("pass the returned exchange_id to exchange_body"));
+        assert!(
+            body["description"]
+                .as_str()
+                .unwrap()
+                .contains("without re-fetching it or using HTTP Range")
+        );
+        assert!(
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "reply_send")
+                .unwrap()["description"]
+                .as_str()
+                .unwrap()
+                .contains("pass the returned exchange_id to exchange_body")
+        );
     }
 }

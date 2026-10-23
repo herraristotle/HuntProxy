@@ -14,10 +14,10 @@ use huntproxy::request_rules::{
     RequestRuleInput, RequestRuleMatchKind, RequestRuleOperation, RequestRuleTarget,
 };
 use huntproxy::storage::Db;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -342,7 +342,10 @@ document.getElementById('read-popup-state').onclick = () => {
     } else {
         ("200 OK", "text/plain", "Local profile fixture".to_owned())
     };
-    let response = format!("HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}", body.len());
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
     let _ = stream.write_all(response.as_bytes()).await;
 }
 
@@ -587,10 +590,12 @@ async fn verify_event_wait_is_session_local(h: &Harness) {
         .expect("another session action was blocked by the empty event wait")
         .unwrap();
     assert_eq!(other.data.unwrap()["pages"].as_array().unwrap().len(), 1);
-    assert!(waited.unwrap().data.unwrap()["events"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert!(
+        waited.unwrap().data.unwrap()["events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert!(started.elapsed() >= std::time::Duration::from_millis(1800));
 }
 
@@ -698,10 +703,12 @@ async fn verify_structured_playwright_actions(h: &Harness) {
         .unwrap();
     let mutation_body: Value = serde_json::from_slice(&mutation_body).unwrap();
     assert_eq!(mutation_body["method"], "POST");
-    assert!(mutation_body["cookie"]
-        .as_str()
-        .unwrap()
-        .contains("sid=default"));
+    assert!(
+        mutation_body["cookie"]
+            .as_str()
+            .unwrap()
+            .contains("sid=default")
+    );
     assert_eq!(mutation_body["request_body_bytes"], 12);
 
     let large = h
@@ -733,42 +740,44 @@ async fn verify_structured_playwright_actions(h: &Harness) {
         32
     );
 
-    assert!(h
-        .service
-        .action(
-            h.project,
-            session.id,
-            BrowserAction::Request {
-                method: "GET".into(),
-                url: format!("http://localhost:{}/api/redirect", h.fixture.port),
-                headers: vec![],
-                body_text: None,
-                body_base64: None,
-                timeout_ms: 5000,
-                max_response_bytes: 4096,
-            },
-        )
-        .await
-        .is_err());
+    assert!(
+        h.service
+            .action(
+                h.project,
+                session.id,
+                BrowserAction::Request {
+                    method: "GET".into(),
+                    url: format!("http://localhost:{}/api/redirect", h.fixture.port),
+                    headers: vec![],
+                    body_text: None,
+                    body_base64: None,
+                    timeout_ms: 5000,
+                    max_response_bytes: 4096,
+                },
+            )
+            .await
+            .is_err()
+    );
     assert_eq!(h.fixture.mutation_count(), 1, "request followed a redirect");
 
-    assert!(h
-        .service
-        .action(
-            h.project,
-            session.id,
-            BrowserAction::Request {
-                method: "POST".into(),
-                url: format!("http://localhost:{}/api/slow-mutate", h.fixture.port),
-                headers: vec![],
-                body_text: Some("single-attempt".into()),
-                body_base64: None,
-                timeout_ms: 1000,
-                max_response_bytes: 4096,
-            },
-        )
-        .await
-        .is_err());
+    assert!(
+        h.service
+            .action(
+                h.project,
+                session.id,
+                BrowserAction::Request {
+                    method: "POST".into(),
+                    url: format!("http://localhost:{}/api/slow-mutate", h.fixture.port),
+                    headers: vec![],
+                    body_text: Some("single-attempt".into()),
+                    body_base64: None,
+                    timeout_ms: 1000,
+                    max_response_bytes: 4096,
+                },
+            )
+            .await
+            .is_err()
+    );
     tokio::time::sleep(std::time::Duration::from_millis(1700)).await;
     assert_eq!(
         h.fixture.mutation_count(),
@@ -974,9 +983,11 @@ async fn verify_structured_playwright_actions(h: &Harness) {
     assert!(resumed_context.runtime_generation > generation);
     let resumed_pages = resumed.data.unwrap()["pages"].as_array().unwrap().to_vec();
     assert_eq!(resumed_pages.len(), 2);
-    assert!(resumed_pages
-        .iter()
-        .any(|page| page["active"] == true && page["title"] == "Fixture details"));
+    assert!(
+        resumed_pages
+            .iter()
+            .any(|page| page["active"] == true && page["title"] == "Fixture details")
+    );
     h.service
         .action(
             h.project,
@@ -1001,39 +1012,43 @@ async fn verify_structured_playwright_actions(h: &Harness) {
         .unwrap()
         .data
         .unwrap();
-    assert!(restored_popup["content"]
-        .as_str()
-        .unwrap()
-        .contains("preserved"));
-    assert!(h
-        .service
-        .action(
-            h.project,
-            session.id,
-            BrowserAction::Pages {
-                op: "select".into(),
-                page_id: Some(original_page_id),
-                runtime_generation: Some(generation),
-                url: None,
-            },
-        )
-        .await
-        .is_err());
-    assert!(h
-        .service
-        .action(
-            h.project,
-            session.id,
-            BrowserAction::Events {
-                after_sequence: event_cursor,
-                runtime_generation: Some(generation),
-                limit: 10,
-                kinds: vec![],
-                wait_ms: 0,
-            },
-        )
-        .await
-        .is_err());
+    assert!(
+        restored_popup["content"]
+            .as_str()
+            .unwrap()
+            .contains("preserved")
+    );
+    assert!(
+        h.service
+            .action(
+                h.project,
+                session.id,
+                BrowserAction::Pages {
+                    op: "select".into(),
+                    page_id: Some(original_page_id),
+                    runtime_generation: Some(generation),
+                    url: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        h.service
+            .action(
+                h.project,
+                session.id,
+                BrowserAction::Events {
+                    after_sequence: event_cursor,
+                    runtime_generation: Some(generation),
+                    limit: 10,
+                    kinds: vec![],
+                    wait_ms: 0,
+                },
+            )
+            .await
+            .is_err()
+    );
     let closed = h
         .service
         .action(
@@ -1051,10 +1066,12 @@ async fn verify_structured_playwright_actions(h: &Harness) {
         .data
         .unwrap();
     assert_eq!(closed["pages"].as_array().unwrap().len(), 1);
-    assert!(closed["pages"][0]["url"]
-        .as_str()
-        .unwrap()
-        .ends_with("/app"));
+    assert!(
+        closed["pages"][0]["url"]
+            .as_str()
+            .unwrap()
+            .ends_with("/app")
+    );
 }
 
 fn css_locator(selector: &str) -> Locator {
@@ -1260,9 +1277,11 @@ async fn native_file_upload_uses_normal_proxy_capture_and_session_lineage() {
         assert_eq!(exchange.summary.status_code, Some(200));
         assert_eq!(exchange.lineage.browser_session_id, Some(session.id));
         assert_eq!(exchange.lineage.capture_session_id, Some(capture_id));
-        assert!(exchange.request_headers.iter().all(|header| !header
-            .name
-            .eq_ignore_ascii_case("x-huntproxy-browser-origin")));
+        assert!(exchange.request_headers.iter().all(|header| {
+            !header
+                .name
+                .eq_ignore_ascii_case("x-huntproxy-browser-origin")
+        }));
 
         let large = h
             .service
@@ -1436,12 +1455,13 @@ async fn verify_native_file_selection(h: &Harness) {
 
     let missing = BrowserAction::Upload {
         locator: css_locator("#no-chooser"),
-        files: vec![h
-            ._directory
-            .path()
-            .join("missing.csv")
-            .display()
-            .to_string()],
+        files: vec![
+            h._directory
+                .path()
+                .join("missing.csv")
+                .display()
+                .to_string(),
+        ],
         via_chooser: true,
         timeout_ms: 100,
     };
@@ -1465,15 +1485,18 @@ async fn verify_native_file_selection(h: &Harness) {
         )
         .await
         .unwrap();
-    assert!(!before.data.unwrap()["content"]
-        .as_str()
-        .unwrap()
-        .contains("data-no-chooser-clicked"));
-    assert!(h
-        .service
-        .action(h.project, first.id, upload("#no-chooser", true, 100))
-        .await
-        .is_err());
+    assert!(
+        !before.data.unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .contains("data-no-chooser-clicked")
+    );
+    assert!(
+        h.service
+            .action(h.project, first.id, upload("#no-chooser", true, 100))
+            .await
+            .is_err()
+    );
     // A timed-out chooser listener must not steal the next legitimate chooser.
     h.service
         .action(h.project, first.id, upload("#browse", true, 5000))
@@ -1485,33 +1508,35 @@ async fn verify_native_file_selection(h: &Harness) {
     );
     let other_file = h._directory.path().join("notes.txt");
     std::fs::write(&other_file, "Autumn reading notes\n").unwrap();
-    assert!(h
-        .service
-        .action(
-            h.project,
-            first.id,
-            BrowserAction::Upload {
-                locator: css_locator("#browse-single"),
-                files: vec![file.display().to_string(), other_file.display().to_string()],
-                via_chooser: true,
-                timeout_ms: 5000,
-            }
-        )
-        .await
-        .is_err());
+    assert!(
+        h.service
+            .action(
+                h.project,
+                first.id,
+                BrowserAction::Upload {
+                    locator: css_locator("#browse-single"),
+                    files: vec![file.display().to_string(), other_file.display().to_string()],
+                    via_chooser: true,
+                    timeout_ms: 5000,
+                }
+            )
+            .await
+            .is_err()
+    );
     let started = std::time::Instant::now();
-    assert!(h
-        .service
-        .action(
-            h.project,
-            first.id,
-            BrowserAction::Inspect {
-                locator: Some(css_locator("#slow-metadata")),
-                max_bytes: 4096,
-            }
-        )
-        .await
-        .is_err());
+    assert!(
+        h.service
+            .action(
+                h.project,
+                first.id,
+                BrowserAction::Inspect {
+                    locator: Some(css_locator("#slow-metadata")),
+                    max_bytes: 4096,
+                }
+            )
+            .await
+            .is_err()
+    );
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
     assert_eq!(
         runtime_inspection(h, second.id, None).await["ready_state"],
@@ -1526,20 +1551,21 @@ async fn verify_native_file_selection(h: &Harness) {
         runtime_inspection(h, first.id, Some("#single-file")).await["element"]["file_count"],
         1
     );
-    assert!(h
-        .service
-        .action(
-            h.project,
-            first.id,
-            BrowserAction::Upload {
-                locator: css_locator("#browse-single"),
-                files: vec![file.display().to_string(), other_file.display().to_string()],
-                via_chooser: true,
-                timeout_ms: 5000,
-            }
-        )
-        .await
-        .is_err());
+    assert!(
+        h.service
+            .action(
+                h.project,
+                first.id,
+                BrowserAction::Upload {
+                    locator: css_locator("#browse-single"),
+                    files: vec![file.display().to_string(), other_file.display().to_string()],
+                    via_chooser: true,
+                    timeout_ms: 5000,
+                }
+            )
+            .await
+            .is_err()
+    );
     assert_eq!(
         runtime_inspection(h, first.id, Some("#single-file")).await["element"]["file_count"],
         1,
@@ -1593,18 +1619,19 @@ async fn verify_native_file_selection(h: &Harness) {
         .unwrap();
     assert_eq!(short["truncated"], true);
     assert!(short["content"].as_str().unwrap().len() <= 30);
-    assert!(h
-        .service
-        .action(
-            h.project,
-            first.id,
-            BrowserAction::Inspect {
-                locator: Some(css_locator("#absent")),
-                max_bytes: 4096,
-            }
-        )
-        .await
-        .is_err());
+    assert!(
+        h.service
+            .action(
+                h.project,
+                first.id,
+                BrowserAction::Inspect {
+                    locator: Some(css_locator("#absent")),
+                    max_bytes: 4096,
+                }
+            )
+            .await
+            .is_err()
+    );
     assert_eq!(
         h.service
             .session_status(h.project, first.id)
@@ -1624,11 +1651,12 @@ async fn verify_native_file_selection(h: &Harness) {
         })
         .await
         .unwrap();
-    assert!(h
-        .service
-        .action(foreign.id, first.id, upload("#direct-file", false, 5000))
-        .await
-        .is_err());
+    assert!(
+        h.service
+            .action(foreign.id, first.id, upload("#direct-file", false, 5000))
+            .await
+            .is_err()
+    );
     h.service.enable_cdp(h.project, first.id).await.unwrap();
     for action in [
         upload("#browse", true, 5000),
@@ -1918,10 +1946,12 @@ async fn verify_named_profiles(h: &Harness) {
         assert!(initial[key].is_null(), "{key} shared: {initial}");
     }
     assert_eq!(initial["workers"], json!([]));
-    assert!(initial["cookie_names"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("theme")));
+    assert!(
+        initial["cookie_names"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("theme"))
+    );
     assert_eq!(initial["websocket"], "acc2");
     assert_saved(&h.click(second.id, "#seed").await, "acc2");
     let first_state = h.click(first.id, "#read").await;
@@ -2043,11 +2073,12 @@ async fn verify_named_profiles(h: &Harness) {
         h.service.disable_cdp(h.project, session).await.unwrap();
     }
 
-    assert!(h
-        .service
-        .reset_browser_profile(h.project, "acc1")
-        .await
-        .unwrap());
+    assert!(
+        h.service
+            .reset_browser_profile(h.project, "acc1")
+            .await
+            .unwrap()
+    );
     assert_saved(&h.click(second.id, "#read").await, "acc2");
     let reset = h
         .service

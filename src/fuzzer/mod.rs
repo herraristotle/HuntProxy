@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 mod generators;
 pub mod variants;
 
-pub use generators::{PayloadGenerator, OAST_PLACEHOLDER};
+pub use generators::{OAST_PLACEHOLDER, PayloadGenerator};
 
 pub const MAX_FUZZ_DIFF_TEXT_BYTES: usize = 64 * 1024;
 
@@ -1302,11 +1302,7 @@ async fn execute_case(
                 None,
             )
             .await?;
-            if fatal {
-                Err(error)
-            } else {
-                Ok(())
-            }
+            if fatal { Err(error) } else { Ok(()) }
         }
     }
 }
@@ -1384,7 +1380,7 @@ fn apply_insertion(
                     return Err(DomainError::invalid(format!(
                         "URL insertion point '{}' requires marker '{}' in draft.url; without a marker each payload must be an absolute URL",
                         point.name, marker
-                    )))
+                    )));
                 }
             });
         }
@@ -1671,9 +1667,11 @@ mod tests {
         .unwrap();
 
         let error = validate_template(&template).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("either 1 shared wordlist or exactly 2 per-point wordlists"));
+        assert!(
+            error
+                .to_string()
+                .contains("either 1 shared wordlist or exactly 2 per-point wordlists")
+        );
     }
 
     #[test]
@@ -2014,10 +2012,12 @@ mod tests {
         let stored: FuzzTemplate = serde_json::from_str(&raw).unwrap();
         let session_id = stored.oast_session_id.expect("session recorded on job");
         assert!(stored.oast_per_case_labels);
-        assert!(stored
-            .oast_payload_url
-            .as_deref()
-            .is_some_and(|url| url.ends_with(".oast.example.com")));
+        assert!(
+            stored
+                .oast_payload_url
+                .as_deref()
+                .is_some_and(|url| url.ends_with(".oast.example.com"))
+        );
 
         // One synthetic label at register plus one minted label per case.
         let map = db
@@ -2328,9 +2328,11 @@ mod tests {
             .await
             .unwrap();
         assert!(cases.len() <= 3);
-        assert!(cases
-            .iter()
-            .all(|case| case.state != FuzzCaseState::Running));
+        assert!(
+            cases
+                .iter()
+                .all(|case| case.state != FuzzCaseState::Running)
+        );
     }
 
     #[tokio::test]

@@ -376,7 +376,9 @@ mod tests {
         .unwrap();
         assert_eq!(
             separator,
-            ["a%00.b", "a%01.b", "a%02.b", "a%03.b", "a.%00b", "a.%01b", "a.%02b", "a.%03b"]
+            [
+                "a%00.b", "a%01.b", "a%02.b", "a%03.b", "a.%00b", "a.%01b", "a.%02b", "a.%03b"
+            ]
         );
     }
 
@@ -404,16 +406,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(double, ["x%2500"]);
-        assert!(generate_regex_bypass(
-            "a.b",
-            RegexBypassEncoding::Url,
-            &[RegexBypassMode::Separator],
-            0,
-            3,
-            true,
-            7,
-        )
-        .is_err());
+        assert!(
+            generate_regex_bypass(
+                "a.b",
+                RegexBypassEncoding::Url,
+                &[RegexBypassMode::Separator],
+                0,
+                3,
+                true,
+                7,
+            )
+            .is_err()
+        );
     }
 
     #[test]

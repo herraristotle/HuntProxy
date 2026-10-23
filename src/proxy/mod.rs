@@ -8,8 +8,8 @@ mod websocket;
 
 use crate::app::AppState;
 use crate::domain::*;
-use crate::policy::scope::{resolve_validated_dial, url_is_in_scope, TargetRef};
-use crate::storage::{extract_proxy_token, NewExchange};
+use crate::policy::scope::{TargetRef, resolve_validated_dial, url_is_in_scope};
+use crate::storage::{NewExchange, extract_proxy_token};
 use crate::transport::{OutboundBody, OutboundRequest, ProtocolMode, StreamingOutboundResponse};
 use bytes::Bytes;
 use futures::StreamExt;
@@ -1320,12 +1320,16 @@ mod tests {
 
         let wire_request = observed.await.unwrap();
         assert!(wire_request.starts_with("GET /huntproxy/rotated?q=1 HTTP/1.1\r\n"));
-        assert!(wire_request
-            .lines()
-            .any(|line| line.eq_ignore_ascii_case(&format!("host: {gateway_addr}"))));
-        assert!(!wire_request
-            .lines()
-            .any(|line| line.eq_ignore_ascii_case("host: example.com")));
+        assert!(
+            wire_request
+                .lines()
+                .any(|line| line.eq_ignore_ascii_case(&format!("host: {gateway_addr}")))
+        );
+        assert!(
+            !wire_request
+                .lines()
+                .any(|line| line.eq_ignore_ascii_case("host: example.com"))
+        );
 
         let detail = wait_for_exchange(&state, project.id).await;
         assert_eq!(detail.summary.scheme, "https");
@@ -1356,8 +1360,8 @@ mod tests {
     async fn websocket_proxy_captures_relays_and_injects_messages() {
         use futures::SinkExt;
         use tokio::net::TcpStream;
-        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
         use tokio_tungstenite::tungstenite::Message;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
         let directory = tempfile::tempdir().unwrap();
         let (state, project, session) = proxy_test_fixture(&directory).await;
@@ -1457,9 +1461,11 @@ mod tests {
             .await
             .unwrap();
         assert!(messages.len() >= 4);
-        assert!(messages
-            .iter()
-            .any(|message| message.direction == "injected_to_server"));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.direction == "injected_to_server")
+        );
         let handshake_id = ExchangeId(connection.handshake_exchange_id.unwrap());
         let request_headers = state
             .db
@@ -1569,18 +1575,22 @@ mod tests {
 
     #[test]
     fn browser_origin_constraint_survives_url_rewrites() {
-        assert!(enforce_browser_request_origin(
-            Some("https://example.com"),
-            "https://example.com/api/items",
-            false,
-        )
-        .is_ok());
-        assert!(enforce_browser_request_origin(
-            Some("https://example.com"),
-            "https://example.com/rewritten",
-            true,
-        )
-        .is_ok());
+        assert!(
+            enforce_browser_request_origin(
+                Some("https://example.com"),
+                "https://example.com/api/items",
+                false,
+            )
+            .is_ok()
+        );
+        assert!(
+            enforce_browser_request_origin(
+                Some("https://example.com"),
+                "https://example.com/rewritten",
+                true,
+            )
+            .is_ok()
+        );
         let original_error = enforce_browser_request_origin(
             Some("https://example.com"),
             "https://other.example/api/items",

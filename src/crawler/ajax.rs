@@ -290,12 +290,16 @@ mod tests {
         "#;
 
         let endpoints = extract_ajax_endpoints("https://example.com", js);
-        assert!(endpoints
-            .iter()
-            .any(|e| e.url.contains("/api/users") && e.method == "GET"));
-        assert!(endpoints
-            .iter()
-            .any(|e| e.url.contains("/api/create") && e.method == "POST"));
+        assert!(
+            endpoints
+                .iter()
+                .any(|e| e.url.contains("/api/users") && e.method == "GET")
+        );
+        assert!(
+            endpoints
+                .iter()
+                .any(|e| e.url.contains("/api/create") && e.method == "POST")
+        );
     }
 
     #[test]

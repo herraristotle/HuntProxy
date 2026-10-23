@@ -1,6 +1,6 @@
 //! Release-owned runtime and first-party plugin provisioning.
 
-use crate::config::{create_private_dir, write_private_file, Config};
+use crate::config::{Config, create_private_dir, write_private_file};
 use crate::domain::{DomainError, DomainResult, ErrorCode};
 use flate2::read::GzDecoder;
 use futures::StreamExt;
@@ -1631,11 +1631,13 @@ mod tests {
         assert!(validate_relative_path(Path::new("/absolute")).is_err());
         assert!(validate_relative_path(Path::new("safe/path")).is_ok());
         assert!(strip_first_component(Path::new("package/../escape")).is_err());
-        assert!(validate_archive_symlink(
-            Path::new("bin/npm"),
-            Path::new("../lib/node_modules/npm/bin/npm-cli.js")
-        )
-        .is_ok());
+        assert!(
+            validate_archive_symlink(
+                Path::new("bin/npm"),
+                Path::new("../lib/node_modules/npm/bin/npm-cli.js")
+            )
+            .is_ok()
+        );
         assert!(validate_archive_symlink(Path::new("bin/npm"), Path::new("../../escape")).is_err());
     }
 

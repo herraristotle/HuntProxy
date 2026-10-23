@@ -161,13 +161,17 @@ mod tests {
         let points = JsonVariant::extract(body);
 
         assert_eq!(points.len(), 3);
-        assert!(points
-            .iter()
-            .any(|p| p.name == "user" && p.original_value == "admin"));
+        assert!(
+            points
+                .iter()
+                .any(|p| p.name == "user" && p.original_value == "admin")
+        );
         assert!(points.iter().any(|p| p.name == "profile.email"));
-        assert!(points
-            .iter()
-            .any(|p| p.name == "profile.age" && p.original_value == "30"));
+        assert!(
+            points
+                .iter()
+                .any(|p| p.name == "profile.age" && p.original_value == "30")
+        );
     }
 
     #[test]

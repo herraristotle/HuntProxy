@@ -1,8 +1,8 @@
 //! Persistent project-scoped API Gateway rotation profiles.
 
 use crate::domain::{DomainError, DomainResult, ErrorCode, ProjectId};
-use crate::storage::{now_rfc3339, write_transaction, Db};
-use rusqlite::{params, OptionalExtension};
+use crate::storage::{Db, now_rfc3339, write_transaction};
+use rusqlite::{OptionalExtension, params};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use url::Url;
@@ -411,30 +411,35 @@ mod tests {
         assert_eq!(first.region, "us-east-1");
         assert_eq!(second.region, "eu-west-1");
         assert_eq!(third.region, "us-east-1");
-        assert!(first
-            .wire_url("https://api.example.test/a?b=1")
-            .unwrap()
-            .ends_with("/huntproxy/a?b=1"));
-        assert!(db
-            .next_ip_rotation_route(project.id, "http://api.example.test/a")
-            .await
-            .unwrap()
-            .is_none());
-        assert!(db
-            .next_ip_rotation_route(project.id, "https://other.example.test/a")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            first
+                .wire_url("https://api.example.test/a?b=1")
+                .unwrap()
+                .ends_with("/huntproxy/a?b=1")
+        );
+        assert!(
+            db.next_ip_rotation_route(project.id, "http://api.example.test/a")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db.next_ip_rotation_route(project.id, "https://other.example.test/a")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         let disabled = db
             .deactivate_ip_rotation(project.id, "https://api.example.test".into())
             .await
             .unwrap();
         assert!(!disabled.enabled);
-        assert!(db
-            .next_ip_rotation_route(project.id, "https://api.example.test/a")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            db.next_ip_rotation_route(project.id, "https://api.example.test/a")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

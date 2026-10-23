@@ -1,11 +1,11 @@
 //! Integration tests for new MCP tools
 //! Run with: cargo test --test mcp_integration -- --test-threads=1
 
-use huntproxy::dom_monitor::{analyze_dom_events, DOMSinkEvent};
+use huntproxy::dom_monitor::{DOMSinkEvent, analyze_dom_events};
 use huntproxy::domain::ProjectId;
 use huntproxy::fingerprint::fingerprint_from_response;
-use huntproxy::inspector::{build_request, parse_request, Param as QueryParam};
-use huntproxy::sequencer::{analyze_tokens, extract_tokens_from_response, TokenSample};
+use huntproxy::inspector::{Param as QueryParam, build_request, parse_request};
+use huntproxy::sequencer::{TokenSample, analyze_tokens, extract_tokens_from_response};
 use huntproxy::storage::Db;
 use std::sync::Arc;
 
@@ -147,9 +147,11 @@ async fn test_token_extraction() {
     let tokens = extract_tokens_from_response(&headers, Some(body));
 
     assert!(tokens.len() >= 2); // At least session + csrf from cookies
-    assert!(tokens
-        .iter()
-        .any(|(name, _, source)| name == "session" && source == "cookie"));
+    assert!(
+        tokens
+            .iter()
+            .any(|(name, _, source)| name == "session" && source == "cookie")
+    );
 }
 
 #[tokio::test]
@@ -181,15 +183,21 @@ async fn test_dom_monitor_xss_detection() {
     let findings = analyze_dom_events(&events);
 
     assert_eq!(findings.len(), 3);
-    assert!(findings
-        .iter()
-        .any(|f| f.severity == "high" && f.description.contains("Event handler")));
-    assert!(findings
-        .iter()
-        .any(|f| f.severity == "high" && f.description.contains("javascript: protocol")));
-    assert!(findings
-        .iter()
-        .any(|f| f.severity == "medium" && f.description.contains("eval")));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.severity == "high" && f.description.contains("Event handler"))
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.severity == "high" && f.description.contains("javascript: protocol"))
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.severity == "medium" && f.description.contains("eval"))
+    );
 }
 
 #[tokio::test]

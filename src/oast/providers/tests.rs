@@ -242,9 +242,10 @@ async fn interactsh_register_sends_mainline_shape_and_auth_header() {
     // Correlation id: 20 chars of the xid alphabet.
     let cid = reg.correlation_id.as_deref().unwrap();
     assert_eq!(cid.len(), 20);
-    assert!(cid
-        .chars()
-        .all(|c| c.is_ascii_digit() || ('a'..='v').contains(&c)));
+    assert!(
+        cid.chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='v').contains(&c))
+    );
     // Secret is a UUID v4 string.
     assert_eq!(
         reg.secret.as_deref().unwrap().len(),

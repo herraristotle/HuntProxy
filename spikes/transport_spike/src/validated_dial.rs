@@ -47,7 +47,10 @@ pub struct FixedIpResolver {
 impl FixedIpResolver {
     pub fn for_dial(dial: &ValidatedDial) -> Self {
         let mut map = HashMap::new();
-        map.insert(dial.hostname.to_ascii_lowercase(), dial.approved_socket_addrs.clone());
+        map.insert(
+            dial.hostname.to_ascii_lowercase(),
+            dial.approved_socket_addrs.clone(),
+        );
         Self {
             map: Arc::new(map),
             // Use a hostname that must never hit the public DNS path in this spike.
@@ -100,9 +103,9 @@ mod wreq_adapter {
                 let iter: Addrs = Box::new(addrs.into_iter());
                 iter
             });
-            Box::pin(future::ready(
-                result.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() }),
-            ))
+            Box::pin(future::ready(result.map_err(
+                |e| -> Box<dyn std::error::Error + Send + Sync> { e.into() },
+            )))
         }
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::domain::*;
 use crate::storage::projects::{now_rfc3339, parse_time};
-use crate::storage::{write_transaction, Db};
+use crate::storage::{Db, write_transaction};
 use rusqlite::params;
 
 impl Db {

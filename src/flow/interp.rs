@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::domain::{DomainError, DomainResult, FlowDefinition, FlowNode, FlowProperty};
 use crate::domain::{ErrorCode, FlowKind};
 
-use super::registry::{node_info, NodeInfo};
+use super::registry::{NodeInfo, node_info};
 
 /// Maximum node handler invocations per run.
 pub const MAX_FLOW_STEPS: usize = 1_000;

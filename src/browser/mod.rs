@@ -1,12 +1,12 @@
 //! Browser worker supervision, real actions, and private per-project browser state.
 
-use crate::config::{create_private_dir, write_private_file, Config};
+use crate::config::{Config, create_private_dir, write_private_file};
 use crate::cookies::{CookiePair, StoredCookieProfile};
 use crate::domain::*;
 use crate::storage::{CreateCaptureSession, Db};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, UdpSocket};
@@ -2544,15 +2544,28 @@ impl BrowserService {
         let identity_path = directory.join("huntproxy-identity.json");
         let identity = json!({"project_id":project_id.get(), "profile":profile});
         match std::fs::read(&identity_path) {
-            Ok(bytes) if serde_json::from_slice::<Value>(&bytes).ok().as_ref() == Some(&identity) => {}
-            Ok(_) => return Err(DomainError::new(ErrorCode::Unavailable,
-                "browser profile directory belongs to a different identity; cannot guarantee isolation")),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                write_private_file(&identity_path, &serde_json::to_vec(&identity)
-                    .map_err(|error| DomainError::new(ErrorCode::Internal, error.to_string()))?)?;
+            Ok(bytes)
+                if serde_json::from_slice::<Value>(&bytes).ok().as_ref() == Some(&identity) => {}
+            Ok(_) => {
+                return Err(DomainError::new(
+                    ErrorCode::Unavailable,
+                    "browser profile directory belongs to a different identity; cannot guarantee isolation",
+                ));
             }
-            Err(error) => return Err(DomainError::new(ErrorCode::Unavailable,
-                format!("cannot verify browser profile owner: {error}"))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                write_private_file(
+                    &identity_path,
+                    &serde_json::to_vec(&identity).map_err(|error| {
+                        DomainError::new(ErrorCode::Internal, error.to_string())
+                    })?,
+                )?;
+            }
+            Err(error) => {
+                return Err(DomainError::new(
+                    ErrorCode::Unavailable,
+                    format!("cannot verify browser profile owner: {error}"),
+                ));
+            }
         }
         Ok(directory)
     }
@@ -2572,7 +2585,7 @@ impl BrowserService {
                 return Err(DomainError::new(
                     ErrorCode::StorageError,
                     format!("read browser profile metadata: {error}"),
-                ))
+                ));
             }
         };
         if metadata.len() > MAX_PERSISTENT_PROFILE_BYTES as u64 {
@@ -2617,7 +2630,7 @@ impl BrowserService {
                 return Err(DomainError::new(
                     ErrorCode::StorageError,
                     "browser profile state exceeds the 25 MiB safety limit; reset the project browser profile",
-                ))
+                ));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 PersistentBrowserProfile::default()
@@ -2626,7 +2639,7 @@ impl BrowserService {
                 return Err(DomainError::new(
                     ErrorCode::StorageError,
                     format!("read browser profile state: {error}"),
-                ))
+                ));
             }
         };
         update(&mut profile);
@@ -2678,7 +2691,7 @@ impl BrowserService {
                 return Err(DomainError::new(
                     ErrorCode::StorageError,
                     "browser profile state exceeds the 25 MiB safety limit; reset the project browser profile",
-                ))
+                ));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 PersistentBrowserProfile::default()
@@ -2687,7 +2700,7 @@ impl BrowserService {
                 return Err(DomainError::new(
                     ErrorCode::StorageError,
                     format!("read browser profile state: {error}"),
-                ))
+                ));
             }
         };
         if !checkpoint.hash.is_empty() && profile.checkpoint_hash == checkpoint.hash {
@@ -2742,7 +2755,7 @@ impl BrowserService {
                     return Err(DomainError::new(
                         ErrorCode::StorageError,
                         format!("list browser profiles: {error}"),
-                    ))
+                    ));
                 }
             };
             for entry in entries {
@@ -3120,7 +3133,7 @@ fn remove_browser_profile_path(path: &Path) -> DomainResult<bool> {
             return Err(DomainError::new(
                 ErrorCode::StorageError,
                 format!("inspect browser profile: {error}"),
-            ))
+            ));
         }
     };
     let result = if metadata.file_type().is_symlink() || metadata.is_file() {
@@ -3150,8 +3163,10 @@ fn verify_worker_identity(
         || result.get("profile_dir").and_then(Value::as_str) != directory.as_deref()
         || result.get("persistent").and_then(Value::as_bool) != Some(profile.is_some())
     {
-        return Err(DomainError::new(ErrorCode::ProtocolError,
-            "browser worker cannot guarantee the requested profile is active; session identity or profile directory mismatch"));
+        return Err(DomainError::new(
+            ErrorCode::ProtocolError,
+            "browser worker cannot guarantee the requested profile is active; session identity or profile directory mismatch",
+        ));
     }
     Ok(())
 }
@@ -3781,13 +3796,15 @@ mod tests {
             let action: BrowserAction = serde_json::from_value(value).unwrap();
             assert!(validate_browser_action(&action).is_err());
         }
-        assert!(serde_json::from_value::<BrowserAction>(json!({
-            "type":"request",
-            "method":"POST",
-            "url":"https://example.com/",
-            "headers":[{"name":"x-test","value":"ok","extra":true}]
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<BrowserAction>(json!({
+                "type":"request",
+                "method":"POST",
+                "url":"https://example.com/",
+                "headers":[{"name":"x-test","value":"ok","extra":true}]
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -4044,13 +4061,15 @@ mod tests {
         let available = cdp_status_view(ProjectId(7), None);
         assert!(!available.active);
         assert!(available.agent_control);
-        assert!(parse_cdp_info(Some(&json!({
-            "port": 9223,
-            "endpoint": "http://127.0.0.1:9223",
-            "devtools_url": "https://example.test/",
-            "hosted_devtools_url": "https://example.test/"
-        })))
-        .is_err());
+        assert!(
+            parse_cdp_info(Some(&json!({
+                "port": 9223,
+                "endpoint": "http://127.0.0.1:9223",
+                "devtools_url": "https://example.test/",
+                "hosted_devtools_url": "https://example.test/"
+            })))
+            .is_err()
+        );
     }
 
     #[test]
@@ -4230,10 +4249,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["default", "account1", "account2"]
         );
-        assert!(profiles
-            .iter()
-            .filter(|profile| profile.name != DEFAULT_BROWSER_PROFILE)
-            .all(|profile| profile.has_state));
+        assert!(
+            profiles
+                .iter()
+                .filter(|profile| profile.name != DEFAULT_BROWSER_PROFILE)
+                .all(|profile| profile.has_state)
+        );
     }
 
     #[tokio::test]
@@ -4274,25 +4295,33 @@ mod tests {
                 .unwrap();
         }
 
-        assert!(service
-            .reset_browser_profile(project.id, "account1")
-            .await
-            .unwrap());
-        assert!(service
-            .load_persistent_profile(project.id, "account1")
-            .await
-            .unwrap()
-            .is_none());
-        assert!(service
-            .load_persistent_profile(project.id, "account2")
-            .await
-            .unwrap()
-            .is_some());
-        assert!(service
-            .load_persistent_profile(project.id, DEFAULT_BROWSER_PROFILE)
-            .await
-            .unwrap()
-            .is_some());
+        assert!(
+            service
+                .reset_browser_profile(project.id, "account1")
+                .await
+                .unwrap()
+        );
+        assert!(
+            service
+                .load_persistent_profile(project.id, "account1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            service
+                .load_persistent_profile(project.id, "account2")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            service
+                .load_persistent_profile(project.id, DEFAULT_BROWSER_PROFILE)
+                .await
+                .unwrap()
+                .is_some()
+        );
         let profiles = service.browser_profiles(project.id).await.unwrap();
         assert!(profiles.iter().any(|profile| profile.name == "account1"));
     }
@@ -4320,15 +4349,19 @@ mod tests {
         let profiles_parent = service.project_profile_dir(project.id).join("profiles");
         write_private_file(&profiles_parent, b"not a directory").unwrap();
 
-        assert!(service
-            .reset_browser_profile(project.id, "account1")
-            .await
-            .is_err());
-        assert!(!service
-            .profile_leases
-            .lock()
-            .await
-            .contains(&(project.id.get(), "account1".into())));
+        assert!(
+            service
+                .reset_browser_profile(project.id, "account1")
+                .await
+                .is_err()
+        );
+        assert!(
+            !service
+                .profile_leases
+                .lock()
+                .await
+                .contains(&(project.id.get(), "account1".into()))
+        );
 
         std::fs::remove_file(profiles_parent).unwrap();
         service
@@ -4381,11 +4414,13 @@ mod tests {
             None,
             PathBuf::from("unused-profiles"),
         );
-        assert!(service
-            .cookies_for_launch(project.id, true, None)
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            service
+                .cookies_for_launch(project.id, true, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         let explicit = service
             .cookies_for_launch(
                 project.id,
@@ -4445,14 +4480,18 @@ mod tests {
         write_private_file(&state_path, b"not json").unwrap();
 
         assert!(service.reset_project_profile(project.id).await.unwrap());
-        assert!(!service
-            .profile_state_path(project.id, DEFAULT_BROWSER_PROFILE)
-            .exists());
-        assert!(service
-            .load_persistent_profile(project.id, DEFAULT_BROWSER_PROFILE)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            !service
+                .profile_state_path(project.id, DEFAULT_BROWSER_PROFILE)
+                .exists()
+        );
+        assert!(
+            service
+                .load_persistent_profile(project.id, DEFAULT_BROWSER_PROFILE)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -4520,10 +4559,12 @@ mod tests {
         assert_eq!(cookies[1]["sameSite"], "Lax");
         assert_eq!(cookies[1]["expires"], 4102444800.5_f64);
         assert_eq!(launch_override.clear_cookies.len(), 2);
-        assert!(launch_override
-            .clear_cookies
-            .iter()
-            .all(|cookie| cookie.get("value").is_none()));
+        assert!(
+            launch_override
+                .clear_cookies
+                .iter()
+                .all(|cookie| cookie.get("value").is_none())
+        );
     }
 
     #[test]
@@ -4575,9 +4616,11 @@ mod tests {
         };
         let cookies = browser_cookies(&[stored]).unwrap();
         assert_eq!(cookies.len(), 2);
-        assert!(cookies
-            .iter()
-            .any(|cookie| cookie["domain"] == "www.example.com" && cookie["value"] == "host"));
+        assert!(
+            cookies
+                .iter()
+                .any(|cookie| cookie["domain"] == "www.example.com" && cookie["value"] == "host")
+        );
         assert!(cookies
             .iter()
             .any(|cookie| cookie["domain"] == ".www.example.com" && cookie["value"] == "domain"));
@@ -4617,10 +4660,12 @@ mod tests {
         let missing_playwright =
             browser_install_status(Some(&node), Some(&worker), None, Some(&chromium));
         assert!(!missing_playwright.worker_available);
-        assert!(missing_playwright
-            .install_hint
-            .as_deref()
-            .is_some_and(|hint| hint.contains("playwright-core missing")));
+        assert!(
+            missing_playwright
+                .install_hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("playwright-core missing"))
+        );
     }
 
     #[test]
@@ -4700,35 +4745,43 @@ mod tests {
         ] {
             let mut missing = identity.clone();
             missing.as_object_mut().unwrap().remove(field);
-            assert!(verify_worker_identity(
-                &missing,
-                BrowserSessionId(8),
+            assert!(
+                verify_worker_identity(
+                    &missing,
+                    BrowserSessionId(8),
+                    Some("acc2"),
+                    Some(Path::new("/profiles/acc2"))
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            verify_worker_identity(
+                &identity,
+                BrowserSessionId(7),
                 Some("acc2"),
                 Some(Path::new("/profiles/acc2"))
             )
-            .is_err());
-        }
-        assert!(verify_worker_identity(
-            &identity,
-            BrowserSessionId(7),
-            Some("acc2"),
-            Some(Path::new("/profiles/acc2"))
-        )
-        .is_err());
-        assert!(verify_worker_identity(
-            &identity,
-            BrowserSessionId(8),
-            Some("acc1"),
-            Some(Path::new("/profiles/acc2"))
-        )
-        .is_err());
-        assert!(verify_worker_identity(
-            &identity,
-            BrowserSessionId(8),
-            Some("acc2"),
-            Some(Path::new("/profiles/acc1"))
-        )
-        .is_err());
+            .is_err()
+        );
+        assert!(
+            verify_worker_identity(
+                &identity,
+                BrowserSessionId(8),
+                Some("acc1"),
+                Some(Path::new("/profiles/acc2"))
+            )
+            .is_err()
+        );
+        assert!(
+            verify_worker_identity(
+                &identity,
+                BrowserSessionId(8),
+                Some("acc2"),
+                Some(Path::new("/profiles/acc1"))
+            )
+            .is_err()
+        );
     }
 
     #[test]

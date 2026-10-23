@@ -68,12 +68,16 @@ mod tests {
         let points = XmlVariant::extract(body);
 
         assert_eq!(points.len(), 2);
-        assert!(points
-            .iter()
-            .any(|p| p.name == "user" && p.original_value == "admin"));
-        assert!(points
-            .iter()
-            .any(|p| p.name == "role" && p.original_value == "viewer"));
+        assert!(
+            points
+                .iter()
+                .any(|p| p.name == "user" && p.original_value == "admin")
+        );
+        assert!(
+            points
+                .iter()
+                .any(|p| p.name == "role" && p.original_value == "viewer")
+        );
     }
 
     #[test]

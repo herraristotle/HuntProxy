@@ -3,7 +3,7 @@
 use crate::domain::{
     DomainError, DomainResult, ExchangeDetail, ExchangeId, HeaderEntry, MessageSide, ProjectId,
 };
-use crate::policy::{is_sensitive_header, REDACTED_PLACEHOLDER};
+use crate::policy::{REDACTED_PLACEHOLDER, is_sensitive_header};
 use crate::storage::Db;
 use base64::Engine;
 use serde::{Deserialize, Serialize};

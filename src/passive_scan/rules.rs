@@ -285,7 +285,7 @@ impl PassiveRule for InfoDisclosureRule {
                         description: format!("Potential information disclosure: {desc}"),
                         evidence: evidence.chars().take(200).collect(),
                         references: vec![
-                            "https://owasp.org/www-community/Improper_Error_Handling".to_string()
+                            "https://owasp.org/www-community/Improper_Error_Handling".to_string(),
                         ],
                     });
                 }
@@ -415,7 +415,7 @@ impl PassiveRule for SqlErrorRule {
                         description: format!("SQL error message detected ({db_type})"),
                         evidence: matched.as_str().chars().take(200).collect(),
                         references: vec![
-                            "https://owasp.org/www-community/attacks/SQL_Injection".to_string()
+                            "https://owasp.org/www-community/attacks/SQL_Injection".to_string(),
                         ],
                     });
                 }

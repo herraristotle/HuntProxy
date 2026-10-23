@@ -6,13 +6,13 @@ mod raw_h2;
 pub use raw::*;
 pub use raw_h2::*;
 
-use crate::codec::{decode_content_encodings, MAX_DECODED_BODY_OUTPUT};
+use crate::codec::{MAX_DECODED_BODY_OUTPUT, decode_content_encodings};
 use crate::domain::*;
-use crate::history::{diff_exchanges, ResponseDiff};
+use crate::history::{ResponseDiff, diff_exchanges};
 use crate::policy::{
-    is_sensitive_header, present_headers, PresentationOptions, REDACTED_PLACEHOLDER,
+    PresentationOptions, REDACTED_PLACEHOLDER, is_sensitive_header, present_headers,
 };
-use crate::policy::{resolve_validated_dial, url_is_in_scope, TargetRef};
+use crate::policy::{TargetRef, resolve_validated_dial, url_is_in_scope};
 use crate::storage::{Db, NewExchange};
 use crate::transport::{OutboundBody, OutboundRequest, ProtocolMode, SemanticTransport};
 use base64::Engine;
@@ -1616,24 +1616,34 @@ mod tests {
             .unwrap();
 
         let requests = recorded.lock().unwrap();
-        assert!(requests[0]
-            .iter()
-            .any(|(name, value)| name == "Cookie" && value == b"sid=managed"));
+        assert!(
+            requests[0]
+                .iter()
+                .any(|(name, value)| name == "Cookie" && value == b"sid=managed")
+        );
         assert!(requests[0].iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("authorization") && value == b"Bearer managed"
         }));
-        assert!(requests[3]
-            .iter()
-            .any(|(name, value)| name == "Cookie" && value == b"sid=explicit"));
-        assert!(!requests[1]
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("cookie")));
-        assert!(!requests[1]
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("authorization")));
-        assert!(!requests[1]
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("x-api-key")));
+        assert!(
+            requests[3]
+                .iter()
+                .any(|(name, value)| name == "Cookie" && value == b"sid=explicit")
+        );
+        assert!(
+            !requests[1]
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+        );
+        assert!(
+            !requests[1]
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+        );
+        assert!(
+            !requests[1]
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("x-api-key"))
+        );
         assert!(requests[2].iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("x-api-key") && value == b"deliberate-probe-identity"
         }));
@@ -1697,9 +1707,11 @@ mod tests {
             recorded_urls.lock().unwrap().as_slice(),
             ["http://127.0.0.1:9/huntproxy/items?page=2"]
         );
-        assert!(!recorded_headers.lock().unwrap()[0]
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("host")));
+        assert!(
+            !recorded_headers.lock().unwrap()[0]
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("host"))
+        );
         let detail = db
             .get_exchange_detail(
                 project.id,
@@ -1792,12 +1804,13 @@ mod tests {
 
         assert!(result.exchange_id.is_none());
         assert_eq!(result.response.unwrap().status_code, 200);
-        assert!(db
-            .list_history(project.id, 10, None, None)
-            .await
-            .unwrap()
-            .0
-            .is_empty());
+        assert!(
+            db.list_history(project.id, 10, None, None)
+                .await
+                .unwrap()
+                .0
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1823,12 +1836,14 @@ mod tests {
             header.name.eq_ignore_ascii_case("content-type") && header.value == b"application/json"
         }));
 
-        assert!(normalize_reply_draft(ReplyDraft {
-            body_override: Some(vec![1]),
-            body_text: Some("conflict".into()),
-            ..Default::default()
-        })
-        .is_err());
+        assert!(
+            normalize_reply_draft(ReplyDraft {
+                body_override: Some(vec![1]),
+                body_text: Some("conflict".into()),
+                ..Default::default()
+            })
+            .is_err()
+        );
     }
 
     #[test]
@@ -1892,19 +1907,23 @@ mod tests {
             .iter()
             .find(|header| header.name.eq_ignore_ascii_case("content-type"))
             .unwrap();
-        assert!(String::from_utf8_lossy(&content_type.value)
-            .starts_with("multipart/form-data; boundary=huntproxy-"));
+        assert!(
+            String::from_utf8_lossy(&content_type.value)
+                .starts_with("multipart/form-data; boundary=huntproxy-")
+        );
         assert!(
             String::from_utf8_lossy(multipart.body_override.as_deref().unwrap())
                 .contains("name=\"name\"\r\n\r\nvalue")
         );
 
-        assert!(normalize_reply_draft(ReplyDraft {
-            body_format: Some(ReplyBodyFormat::Json),
-            body_text: Some("not-json".into()),
-            ..Default::default()
-        })
-        .is_err());
+        assert!(
+            normalize_reply_draft(ReplyDraft {
+                body_format: Some(ReplyBodyFormat::Json),
+                body_text: Some("not-json".into()),
+                ..Default::default()
+            })
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1988,10 +2007,12 @@ mod tests {
             Some(br#"{"partner":7}"#.as_slice())
         );
         for expected in ["cookie", "authorization", "origin", "content-type"] {
-            assert!(request
-                .headers
-                .iter()
-                .any(|(name, _)| name.eq_ignore_ascii_case(expected)));
+            assert!(
+                request
+                    .headers
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case(expected))
+            );
         }
         for removed in [
             "host",
@@ -1999,10 +2020,12 @@ mod tests {
             "transfer-encoding",
             "x-goog-api-key",
         ] {
-            assert!(!request
-                .headers
-                .iter()
-                .any(|(name, _)| name.eq_ignore_ascii_case(removed)));
+            assert!(
+                !request
+                    .headers
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case(removed))
+            );
         }
 
         let changed_to_get = materialize_request(

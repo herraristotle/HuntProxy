@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use regex::RegexBuilder;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::domain::{
     DomainError, DomainResult, ErrorCode, ExchangeId, FlowNode, HeaderPatch, ProjectId,
@@ -17,8 +17,8 @@ use crate::reply::ReplyService;
 use crate::storage::Db;
 
 use super::interp::{NodeExecCtx, NodeHandler, NodeOutcome};
-use super::js::{run_flow_js, JsHost};
-use super::shell::{run_flow_shell, shell_args, shell_timeout_ms, ShellRequest};
+use super::js::{JsHost, run_flow_js};
+use super::shell::{ShellRequest, run_flow_shell, shell_args, shell_timeout_ms};
 
 const DEFAULT_JS_TIMEOUT_MS: u64 = 5_000;
 const MAX_JS_TIMEOUT_MS: u64 = 30_000;
@@ -146,7 +146,7 @@ impl BuiltInHandler {
             Some(other) => {
                 return Err(DomainError::invalid(format!(
                     "headers must be an object, got {other}"
-                )))
+                )));
             }
         };
         let draft = ReplyDraft {
@@ -188,7 +188,7 @@ impl BuiltInHandler {
                 return Err(DomainError::new(
                     ErrorCode::Timeout,
                     format!("http-request exceeded {} ms", timeout.as_millis()),
-                ))
+                ));
             }
         };
         let headers_out = match result.exchange_id {
@@ -432,7 +432,7 @@ fn if_else(inputs: &BTreeMap<String, Value>) -> DomainResult<NodeOutcome> {
             _ => {
                 return Err(DomainError::invalid(
                     "op `contains` requires string or array left operand",
-                ))
+                ));
             }
         },
         "startswith" => left
@@ -460,7 +460,7 @@ fn if_else(inputs: &BTreeMap<String, Value>) -> DomainResult<NodeOutcome> {
         other => {
             return Err(DomainError::invalid(format!(
                 "unknown comparison op `{other}`"
-            )))
+            )));
         }
     };
     Ok(NodeOutcome::port(if matched { "true" } else { "false" }))
@@ -537,7 +537,7 @@ fn regex_match(inputs: &BTreeMap<String, Value>) -> DomainResult<NodeOutcome> {
             other => {
                 return Err(DomainError::invalid(format!(
                     "unknown regex flag `{other}` (use i, m, or s)"
-                )))
+                )));
             }
         }
     }

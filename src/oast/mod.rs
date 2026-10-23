@@ -11,7 +11,7 @@ use crate::config::{OastConfig, OastProviderKind};
 use crate::domain::{DomainError, DomainResult, ErrorCode, FuzzJobId, ProjectId};
 use crate::fuzzer::FuzzTemplate;
 use crate::storage::{
-    now_rfc3339, Db, NewOastInteraction, NewOastSession, OastProviderRow, OastSessionRow,
+    Db, NewOastInteraction, NewOastSession, OastProviderRow, OastSessionRow, now_rfc3339,
 };
 use dashmap::DashMap;
 pub use providers::{Interaction, OastProvider, ProviderRegistration, RegisterOptions};
@@ -264,14 +264,14 @@ impl OastService {
                             return Err(DomainError::new(
                                 ErrorCode::Unavailable,
                                 "oast is not configured; add a provider (oast_providers add) or set the [oast] section",
-                            ))
+                            ));
                         }
                         1 => (*enabled[0]).clone(),
                         _ => {
                             return Err(DomainError::new(
                                 ErrorCode::InvalidArgument,
                                 "multiple oast providers are enabled; set one as default (oast_providers set_default) or pass provider_id",
-                            ))
+                            ));
                         }
                     }
                 }
@@ -1419,12 +1419,14 @@ mod tests {
         let stopped = service.stop(project, session.session_id).await.unwrap();
         assert_eq!(stopped.status, "stopped");
         // Stopped sessions leave the watch list (poller skips them).
-        assert!(service
-            .db
-            .list_oast_watch_sessions()
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            service
+                .db
+                .list_oast_watch_sessions()
+                .await
+                .unwrap()
+                .is_empty()
+        );
         server.verify().await;
     }
 
@@ -1548,12 +1550,14 @@ mod tests {
         let listed = service.list(project).await.unwrap();
         assert_eq!(listed[0].status, "expired");
         // Expired sessions leave the background poller's watch list.
-        assert!(service
-            .db
-            .list_oast_watch_sessions()
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            service
+                .db
+                .list_oast_watch_sessions()
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

@@ -2,8 +2,8 @@
 
 use crate::domain::*;
 use crate::storage::projects::{now_rfc3339, parse_time};
-use crate::storage::{write_transaction, Db};
-use rusqlite::{params, OptionalExtension};
+use crate::storage::{Db, write_transaction};
+use rusqlite::{OptionalExtension, params};
 use std::collections::BTreeSet;
 
 const MAX_LABELS_PER_EXCHANGE: usize = 64;

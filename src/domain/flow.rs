@@ -4,8 +4,8 @@
 //! `{kind:"ref"}` properties that name an earlier node's output by alias.
 
 use serde::{Deserialize, Serialize};
-use time::serde::rfc3339;
 use time::OffsetDateTime;
+use time::serde::rfc3339;
 
 use super::{DomainError, DomainResult, FlowId, ProjectId};
 
@@ -311,19 +311,23 @@ mod tests {
     fn rejects_duplicate_and_invalid_aliases() {
         let mut definition = sample();
         definition.graph.nodes[1].alias = "start".into();
-        assert!(definition
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("duplicate"));
+        assert!(
+            definition
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate")
+        );
 
         let mut definition = sample();
         definition.graph.nodes[0].alias = "bad alias".into();
-        assert!(definition
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("invalid node alias"));
+        assert!(
+            definition
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("invalid node alias")
+        );
     }
 
     #[test]
@@ -336,19 +340,23 @@ mod tests {
                 output: "x".into(),
             },
         );
-        assert!(definition
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("unknown node"));
+        assert!(
+            definition
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("unknown node")
+        );
 
         let mut definition = sample();
         definition.graph.edges[0].target.node = "ghost".into();
-        assert!(definition
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("unknown node"));
+        assert!(
+            definition
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("unknown node")
+        );
     }
 
     #[test]
@@ -360,10 +368,12 @@ mod tests {
         let mut definition = sample();
         let source = definition.graph.edges[0].source.clone();
         definition.graph.edges[0].target = source;
-        assert!(definition
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("self edge"));
+        assert!(
+            definition
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("self edge")
+        );
     }
 }

@@ -2,7 +2,7 @@
 //! Parse headers/params/cookies into editable structures, rebuild HTTP after edits.
 
 use crate::domain::{DomainError, DomainResult};
-use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

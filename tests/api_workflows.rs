@@ -231,10 +231,12 @@ async fn ip_rotation_status_is_visible_and_blocks_project_deletion_until_cleanup
         .await
         .unwrap();
     assert_eq!(delete.status(), StatusCode::CONFLICT);
-    assert!(json_response(delete).await["message"]
-        .as_str()
-        .unwrap()
-        .contains("disable IP rotation"));
+    assert!(
+        json_response(delete).await["message"]
+            .as_str()
+            .unwrap()
+            .contains("disable IP rotation")
+    );
 }
 
 #[tokio::test]
@@ -298,10 +300,12 @@ async fn browser_profile_api_manages_named_identities() {
         .await
         .unwrap();
     assert_eq!(missing_cookie_profile.status(), StatusCode::NOT_FOUND);
-    assert!(json_response(missing_cookie_profile).await["message"]
-        .as_str()
-        .unwrap()
-        .contains("cookie profile"));
+    assert!(
+        json_response(missing_cookie_profile).await["message"]
+            .as_str()
+            .unwrap()
+            .contains("cookie profile")
+    );
 
     for body in [
         r#"{"profile":"account1","cookie_profile":"account2"}"#,
@@ -381,11 +385,13 @@ async fn deleting_project_removes_all_named_browser_profiles() {
         .unwrap();
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
     assert!(!project_profiles.exists());
-    assert!(state
-        .browser
-        .create_browser_profile(project_id, "late-profile")
-        .await
-        .is_err());
+    assert!(
+        state
+            .browser
+            .create_browser_profile(project_id, "late-profile")
+            .await
+            .is_err()
+    );
     assert!(!project_profiles.exists());
 }
 
@@ -419,10 +425,12 @@ async fn browser_cdp_api_reports_control_state_and_validates_session_requirement
         .await
         .unwrap();
     assert_eq!(missing_session.status(), StatusCode::BAD_REQUEST);
-    assert!(json_response(missing_session).await["message"]
-        .as_str()
-        .unwrap()
-        .contains("session_id"));
+    assert!(
+        json_response(missing_session).await["message"]
+            .as_str()
+            .unwrap()
+            .contains("session_id")
+    );
 }
 
 #[tokio::test]
@@ -717,10 +725,12 @@ async fn history_filter_and_annotation_work_through_http_api() {
         )
         .await
         .unwrap();
-    assert!(json_response(empty).await["items"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert!(
+        json_response(empty).await["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 
     let annotation = app
         .clone()
@@ -1311,11 +1321,13 @@ async fn get_words_includes_javascript_related_to_the_requested_site_by_default(
         .await
         .unwrap();
     let excluded = json_response(excluded).await;
-    assert!(!excluded["words"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|word| word == "workspaceManager"));
+    assert!(
+        !excluded["words"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|word| word == "workspaceManager")
+    );
 }
 
 #[tokio::test]
@@ -1417,18 +1429,26 @@ async fn background_crawler_fetches_one_level_and_obeys_scope_exclusions() {
     assert!(sitemap[0].paths.contains(&"/app.js".to_string()));
     assert!(!sitemap[0].paths.contains(&"/excluded".to_string()));
     let requests = server.received_requests().await.unwrap();
-    assert!(requests
-        .iter()
-        .any(|request| request.url.path() == "/about"));
-    assert!(requests
-        .iter()
-        .any(|request| request.url.path() == "/app.css"));
-    assert!(!requests
-        .iter()
-        .any(|request| request.url.path() == "/app.js"));
-    assert!(!requests
-        .iter()
-        .any(|request| request.url.path() == "/excluded"));
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.url.path() == "/about")
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.url.path() == "/app.css")
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.url.path() == "/app.js")
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.url.path() == "/excluded")
+    );
     assert!(!requests.iter().any(|request| matches!(
         request.url.path(),
         "/delete-account" | "/logout" | "/search"
@@ -1443,10 +1463,12 @@ async fn background_crawler_fetches_one_level_and_obeys_scope_exclusions() {
         .iter()
         .find(|script| script.path == "/app.js")
         .unwrap();
-    assert!(script
-        .related_page_urls
-        .iter()
-        .any(|url| url == &format!("{}/", server.uri())));
+    assert!(
+        script
+            .related_page_urls
+            .iter()
+            .any(|url| url == &format!("{}/", server.uri()))
+    );
 }
 
 #[tokio::test]
@@ -1929,10 +1951,12 @@ async fn copy_as_includes_secrets_by_default_and_can_explicitly_redact_them() {
     assert_eq!(included.status(), StatusCode::OK);
     let included = json_response(included).await;
     assert_eq!(included["redacted_headers"], 0);
-    assert!(included["content"]
-        .as_str()
-        .unwrap()
-        .contains("Authorization: Bearer top-secret"));
+    assert!(
+        included["content"]
+            .as_str()
+            .unwrap()
+            .contains("Authorization: Bearer top-secret")
+    );
     assert_eq!(
         included["content"]
             .as_str()
@@ -2054,9 +2078,11 @@ async fn raw_reply_preserves_framing_and_collects_response_sequences() {
     let transcript = base64::engine::general_purpose::STANDARD
         .decode(raw["data"].as_str().unwrap())
         .unwrap();
-    assert!(transcript
-        .windows(b"HTTP/1.1 201 ".len())
-        .any(|window| window == b"HTTP/1.1 201 "));
+    assert!(
+        transcript
+            .windows(b"HTTP/1.1 201 ".len())
+            .any(|window| window == b"HTTP/1.1 201 ")
+    );
 
     let mcp_presented = huntproxy::mcp::call_tool(
         state.clone(),
@@ -2084,10 +2110,12 @@ async fn raw_reply_preserves_framing_and_collects_response_sequences() {
     )
     .await
     .unwrap();
-    assert!(mcp_raw["preview"]
-        .as_str()
-        .unwrap()
-        .starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(
+        mcp_raw["preview"]
+            .as_str()
+            .unwrap()
+            .starts_with("HTTP/1.1 200 OK\r\n")
+    );
     server.abort();
 }
 
@@ -2159,18 +2187,22 @@ async fn identity_selectors_reject_misplaced_fields_before_dispatch() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
-    assert!(state
-        .db
-        .list_fuzz_jobs(project_id)
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(state
-        .db
-        .list_reply_tabs(project_id)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        state
+            .db
+            .list_fuzz_jobs(project_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        state
+            .db
+            .list_reply_tabs(project_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

@@ -13,37 +13,37 @@ mod sitemap;
 mod stats;
 mod types;
 
-pub use ajax::{extract_ajax_endpoints, extract_framework_routes, AjaxEndpoint, AjaxSource};
+pub use ajax::{AjaxEndpoint, AjaxSource, extract_ajax_endpoints, extract_framework_routes};
 pub use engine::{CrawlEngine, CrawlEngineConfig};
 pub use filter::{filter_matches_url, parse_crawl_filter};
-pub use forms::{extract_forms, generate_form_values, DiscoveredForm, FormField};
+pub use forms::{DiscoveredForm, FormField, extract_forms, generate_form_values};
 pub use jobs::{CrawlJobManager, StartCrawlRequest};
 pub use queue::{CrawlQueue, QueueStats};
 pub use rate_limit::RateLimiter;
 pub use robots::{RobotsHandler, RobotsTxt};
 pub use sitemap::{
-    extract_sitemaps_from_robots, is_sitemap_index, parse_sitemap, parse_sitemap_index, SitemapUrl,
+    SitemapUrl, extract_sitemaps_from_robots, is_sitemap_index, parse_sitemap, parse_sitemap_index,
 };
 pub use stats::StatsTracker;
 pub use types::{
-    compute_unique_key, filter_links_by_strategy, CrawlRequest, CrawlRequestState, CrawlStats,
-    CrawlerOptions, LinkStrategy,
+    CrawlRequest, CrawlRequestState, CrawlStats, CrawlerOptions, LinkStrategy, compute_unique_key,
+    filter_links_by_strategy,
 };
 
 use crate::app::AppEvent;
 use crate::browser::BrowserService;
 use crate::codec::decode_content_encodings;
 use crate::domain::*;
-use crate::policy::{url_is_in_scope, PresentationOptions};
+use crate::policy::{PresentationOptions, url_is_in_scope};
 use crate::reply::{ReplySendContext, ReplyService};
 use crate::storage::{Db, JavascriptProvenanceInput};
 use dashmap::DashSet;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{Semaphore, broadcast};
 use url::Url;
 
 const MAX_LINKS_PER_PAGE: usize = 64;

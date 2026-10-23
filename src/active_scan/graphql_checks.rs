@@ -1,7 +1,7 @@
 //! GraphQL and infrastructure active checks: introspection, host header
 //! injection, subdomain takeover.
 
-use super::checks::{send_base, send_probe, ActiveCheck, CheckResult, CheckSeverity};
+use super::checks::{ActiveCheck, CheckResult, CheckSeverity, send_base, send_probe};
 use super::job::ActiveScanJob;
 use crate::domain::*;
 use crate::fuzzer::variants::InjectionPoint;

@@ -2,8 +2,8 @@
 
 use crate::domain::*;
 use crate::passive_scan::{PassiveRuleResult, RuleSeverity};
-use crate::storage::projects::now_rfc3339;
 use crate::storage::Db;
+use crate::storage::projects::now_rfc3339;
 use rusqlite::params;
 use sha2::{Digest, Sha256};
 
