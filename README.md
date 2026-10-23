@@ -112,7 +112,7 @@ Build the release binary yourself instead of downloading it:
 # 1. Native build dependencies (Debian/Ubuntu)
 sudo apt-get install -y build-essential cmake clang libclang-dev pkg-config
 
-# 2. Rust 1.88.0 — pinned automatically by rust-toolchain.toml through rustup
+# 2. Rust 1.99.1 — pinned automatically by rust-toolchain.toml through rustup
 
 # 3. Build
 cargo build --release --locked --bin HuntProxy   # → target/release/HuntProxy
