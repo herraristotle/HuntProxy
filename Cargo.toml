@@ -109,6 +109,7 @@ async-stream = "0.3"
 
 tokio-stream = "0.1"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+hybrid-array = "0.4.15"
 
 # BoringSSL symbol prefixing is supported only on Linux and Android. Keeping it
 # enabled on macOS prefixes the Rust bindings but not the native libraries.

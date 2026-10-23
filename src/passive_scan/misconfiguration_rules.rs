@@ -169,6 +169,7 @@ impl PassiveRule for DangerousHttpMethods {
     }
 }
 
+#[allow(dead_code)]
 pub struct TlsVersionCheck;
 
 #[async_trait]

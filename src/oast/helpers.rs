@@ -8,6 +8,7 @@ use aes::Aes256;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use ctr::cipher::{KeyIvInit, StreamCipher};
+use hybrid_array::Array as GenericArray;
 use rand::RngCore;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
@@ -146,7 +147,7 @@ fn protocol_error(message: impl Into<String>) -> DomainError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aes::cipher::generic_array::GenericArray;
+    use hybrid_array::Array as GenericArray;
     use rsa::pkcs8::DecodePublicKey;
 
     #[test]
