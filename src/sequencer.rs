@@ -178,6 +178,7 @@ fn runs_test(bits: &[u8]) -> TestResult {
             statistic: 0.0,
             p_value: 0.0,
             passed: false,
+            applicable: false,
         };
     }
 
