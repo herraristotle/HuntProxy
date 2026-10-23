@@ -11,10 +11,12 @@ ignore = [
   # ciphertext in our threat model. Risk documented and accepted.
   { id = "RUSTSEC-2023-0071" },
 
-  # RUSTSEC-2026-0036: ctutils Non-constant-time mask generation and `u128` comparisons.
-  # Fixed in ctutils 0.4.5; blocked on crypto-bigint 0.7.5 → 0.8 and rsa 0.10 stable.
-  # Transitive through crypto-bigint (via rsa). Accepted pending upstream releases.
+  # RUSTSEC-2026-0036 / RUSTSEC-2026-0385: ctutils Non-constant-time mask generation
+  # and `u128` comparisons. Fixed in ctutils 0.4.5; blocked on crypto-bigint 0.7.5 → 0.8
+  # and rsa 0.10 stable. Transitive through crypto-bigint (via rsa). Accepted pending
+  # upstream releases.
   { id = "RUSTSEC-2026-0036" },
+  { id = "RUSTSEC-2026-0385" },
 ]
 
 [licenses]
